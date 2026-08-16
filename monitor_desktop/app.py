@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QStyle,
@@ -91,7 +92,38 @@ class VideoSurface(QLabel):
         self._frame: np.ndarray | None = None
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(560, 360)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         self.setStyleSheet("background: #070806; border: 1px solid #252a24;")
+
+    def present(self, frame: np.ndarray) -> None:
+        self._frame = frame
+        self._render_frame()
+
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self._render_frame()
+
+    def _render_frame(self) -> None:
+        if self._frame is None or self.width() < 2 or self.height() < 2:
+            return
+        display = fit_frame_to_box(self._frame, self.width(), self.height())
+        rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+        image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format.Format_RGB888).copy()
+        self.setPixmap(QPixmap.fromImage(image))
+
+
+class ScopeView(QLabel):
+    """A fixed-height image surface that never lets scope pixmaps resize the UI."""
+
+    fixed_height = 118
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._frame: np.ndarray | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedHeight(self.fixed_height)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet("background: #0b0d0a; border: 1px solid #343932;")
 
     def present(self, frame: np.ndarray) -> None:
         self._frame = frame
@@ -257,6 +289,8 @@ class MonitorWindow(QMainWindow):
         layout.setSpacing(7)
         self.backend_select = QComboBox()
         self.backend_select.addItems(["Sony Wi-Fi Remote API", "gphoto2 USB", "Camera Remote SDK server"])
+        if GPhotoBackend.installed():
+            self.backend_select.setCurrentIndex(1)
         self.backend_select.currentIndexChanged.connect(self._update_backend_hint)
         layout.addWidget(self.backend_select)
         self.endpoint_input = QLineEdit()
@@ -431,12 +465,8 @@ class MonitorWindow(QMainWindow):
         return group
 
     @staticmethod
-    def _scope_view() -> QLabel:
-        view = QLabel()
-        view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        view.setMinimumHeight(118)
-        view.setStyleSheet("background: #0b0d0a; border: 1px solid #343932;")
-        return view
+    def _scope_view() -> ScopeView:
+        return ScopeView()
 
     @staticmethod
     def _slider(minimum: int, maximum: int, value: int, callback: Any) -> QSlider:
@@ -456,11 +486,12 @@ class MonitorWindow(QMainWindow):
     def _update_backend_hint(self) -> None:
         hints = [
             "Join camera Wi-Fi, then Discover or enter its IP address.",
-            "Connect over USB in PC Remote mode. Requires gphoto2.",
+            "USB Sony control: turn the camera on, set PC Remote mode, then select Discover.",
             "Enter a local Camera Remote SDK REST server URL.",
         ]
         hint = hints[self.backend_select.currentIndex()]
         self.endpoint_input.setPlaceholderText(hint)
+        self.endpoint_input.setEnabled(self.backend_select.currentIndex() != 1)
         self.camera_connection_status.setText(hint)
 
     def _on_zebra_changed(self) -> None:
@@ -500,7 +531,10 @@ class MonitorWindow(QMainWindow):
         self.capture = capture
         self.capture_is_file = self.source_kind.currentIndex() == 2 or Path(source_value).is_file()
         self.connection_label.setText("VIDEO CONNECTED")
-        self._notify(f"Connected to {source_value}.")
+        if self.source_kind.currentIndex() == 0 and source == 0:
+            self._notify("Connected to capture device 0. For Sony USB control, use gphoto2 USB in the Sony camera panel.")
+        else:
+            self._notify(f"Connected to {source_value}.")
 
     def _set_capture(self, capture: cv2.VideoCapture | GPhotoLiveCapture, label: str) -> None:
         self._release_capture()
@@ -535,6 +569,7 @@ class MonitorWindow(QMainWindow):
         for device in devices:
             self.camera_devices.addItem(device.name, device)
         if devices:
+            self.camera_devices.setCurrentIndex(0)
             self.camera_connection_status.setText(f"Found {len(devices)} camera(s). Select one and connect.")
             self._notify(f"Found {len(devices)} camera(s).")
         else:
@@ -572,6 +607,8 @@ class MonitorWindow(QMainWindow):
                     self.camera_devices.clear()
                     for found in devices:
                         self.camera_devices.addItem(found.name, found)
+                    if devices:
+                        self.camera_devices.setCurrentIndex(0)
                 if not self.discovered_devices or self.active_backend is None:
                     raise CameraError("No camera is available to connect.")
                 device = self.camera_devices.currentData()
@@ -752,9 +789,9 @@ class MonitorWindow(QMainWindow):
         self.frame_count += 1
         self.timecode_label.setText(dt.datetime.now().strftime("%H:%M:%S"))
         if self.frame_count % 3 == 0:
-            self._set_image(self.histogram_view, make_histogram(frame))
-            self._set_image(self.waveform_view, make_waveform(frame))
-            self._set_image(self.vectorscope_view, make_vectorscope(frame))
+            self.histogram_view.present(make_histogram(frame))
+            self.waveform_view.present(make_waveform(frame))
+            self.vectorscope_view.present(make_vectorscope(frame))
 
     def _show_idle_frame(self) -> None:
         idle = np.zeros((720, 1280, 3), dtype=np.uint8)
@@ -764,15 +801,6 @@ class MonitorWindow(QMainWindow):
         cv2.line(idle, (550, 360), (730, 360), (48, 55, 47), 1)
         cv2.putText(idle, "NO VIDEO SIGNAL", (504, 520), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (154, 164, 154), 2, cv2.LINE_AA)
         self.video_surface.present(idle)
-
-    @staticmethod
-    def _set_image(label: QLabel, frame: np.ndarray) -> None:
-        if frame is None or label.width() < 2 or label.height() < 2:
-            return
-        display = fit_frame_to_box(frame, label.width(), label.height())
-        rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
-        image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format.Format_RGB888).copy()
-        label.setPixmap(QPixmap.fromImage(image))
 
     def _notify(self, message: str, error: bool = False) -> None:
         self.status_label.setText(message)
