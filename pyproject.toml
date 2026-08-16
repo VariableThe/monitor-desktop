@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "monitor-desktop"
+version = "0.1.0"
+description = "Linux-first desktop monitoring and remote-control app for Sony cameras"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Aditya" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: Qt",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+]
+dependencies = [
+  "numpy>=2.0",
+  "opencv-python>=4.10",
+  "PySide6>=6.8,<7",
+]
+
+[project.scripts]
+monitor-desktop = "monitor_desktop.app:main"
+
+[tool.setuptools]
+packages = ["monitor_desktop"]
