@@ -46,7 +46,7 @@ make run
 - **Video sources:** UVC and HDMI capture devices, webcams, local video files, RTSP, HTTP, and MJPEG streams supported by OpenCV.
 - **Monitor assists:** Zebra, false color, focus peaking, frame guides, mirror, anamorphic desqueeze, histogram, waveform, and vectorscope.
 - **Looks and LUTs:** Neutral, Warm Film, Soft Matte, Teal and Amber, and Monochrome monitoring looks, plus custom `.cube` LUT preview and strength control.
-- **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups for compatible bodies.
+- **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups and persistent named custom camera setups for compatible bodies.
 - **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry.
 - **Local output:** Monitor-feed recording and PNG frame export are written locally under `recordings/`.
 
@@ -97,6 +97,7 @@ This is Sony's earlier JSON-RPC API. For current desktop SDK support, run a comp
 - Capture cards are the most universal route for clean, low-latency monitoring. Sony control remains on the camera when using HDMI-only capture.
 - Built-in looks are creative monitoring looks, not color-managed replacements for a camera-specific Log-to-Rec.709 transform. Load the matching technical `.cube` LUT when accurate log monitoring is required.
 - The app is local-first: footage, LUT files, recordings, and stills stay on the operator's computer.
+- In Advanced mode, use the save control beside **Apply setup** to capture the current camera's writable quick settings as a named custom setup. Custom setups persist on the workstation and safely skip values unsupported by a different connected body.
 
 ## Development
 

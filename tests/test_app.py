@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -11,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
-from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView
+from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView, load_custom_camera_presets, save_custom_camera_presets
 from monitor_desktop.backends import CameraDevice
 
 
@@ -98,6 +100,64 @@ class ScopeViewTests(unittest.TestCase):
         control.value_input.setText("333")
         control.apply_current()
         self.assertEqual(invalid, ["iso"])
+
+    def test_custom_camera_presets_round_trip_only_supported_setting_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "camera-presets.json"
+            save_custom_camera_presets(
+                path,
+                {
+                    "Desk": {"iso": "800", "shutter": "1/50", "unsupported": "ignored"},
+                    "": {"iso": "100"},
+                },
+            )
+
+            self.assertEqual(load_custom_camera_presets(path), {"Desk": {"iso": "800", "shutter": "1/50"}})
+
+    def test_saving_custom_camera_preset_persists_current_camera_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "camera-presets.json"
+            window = MonitorWindow(path)
+            window.active_backend = object()  # type: ignore[assignment]
+            window._set_camera_controls_enabled(True)
+            window.camera_setting_boxes["iso"].setCurrentText("800")
+            window.camera_setting_boxes["shutter"].setCurrentText("1/50")
+
+            with patch("monitor_desktop.app.QInputDialog.getText", return_value=("Desk", True)):
+                window.save_current_camera_preset()
+
+            self.assertEqual(window.camera_preset_select.currentText(), "Custom: Desk")
+            self.assertEqual(load_custom_camera_presets(path)["Desk"]["iso"], "800")
+            window.close()
+
+            reloaded = MonitorWindow(path)
+            self.assertIn("Custom: Desk", [reloaded.camera_preset_select.itemText(index) for index in range(reloaded.camera_preset_select.count())])
+            reloaded.close()
+
+    def test_custom_camera_preset_applies_only_matching_values(self) -> None:
+        class FakeBackend:
+            name = "Test camera"
+
+            def __init__(self) -> None:
+                self.applied: list[tuple[str, str]] = []
+
+            def set_property(self, name: str, value: str) -> str:
+                self.applied.append((name, value))
+                return f"Set {name}"
+
+        with tempfile.TemporaryDirectory() as directory:
+            window = MonitorWindow(Path(directory) / "camera-presets.json")
+            backend = FakeBackend()
+            window.active_backend = backend  # type: ignore[assignment]
+            window._set_camera_controls_enabled(True)
+            window.custom_camera_presets = {"Desk": {"iso": "800", "shutter": "1/50", "aperture": "99"}}
+            window._refresh_camera_preset_select("Custom: Desk")
+
+            window.apply_camera_preset()
+
+            self.assertEqual(backend.applied, [("iso", "800"), ("shutter", "1/50")])
+            self.assertIn("Skipped: aperture", window.status_label.text())
+            window.close()
 
     def test_auto_connect_uses_a_single_discovered_usb_camera(self) -> None:
         class FakeGPhotoBackend:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import sys
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QFontDatabase, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,9 +21,11 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -112,6 +115,53 @@ CAMERA_PRESETS = {
     "24 fps indoor": {"iso": "800", "shutter": "1/50", "white_balance": "Auto"},
     "24 fps low light": {"iso": "1600", "shutter": "1/50", "white_balance": "Auto"},
 }
+
+CAMERA_SETTING_NAMES = ("iso", "shutter", "aperture", "white_balance", "focus_mode")
+CUSTOM_CAMERA_PRESET_PREFIX = "Custom: "
+
+
+def custom_camera_preset_path() -> Path:
+    config_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
+    return Path(config_dir) / "camera-presets.json"
+
+
+def _clean_custom_camera_presets(presets: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    cleaned: dict[str, dict[str, str]] = {}
+    for raw_name, raw_values in presets.items():
+        if not isinstance(raw_name, str) or not isinstance(raw_values, dict):
+            continue
+        name = raw_name.strip()
+        values = {
+            setting: value.strip()
+            for setting, value in raw_values.items()
+            if setting in CAMERA_SETTING_NAMES and isinstance(value, str) and value.strip()
+        }
+        if name and values:
+            cleaned[name] = values
+    return dict(sorted(cleaned.items(), key=lambda item: item[0].casefold()))
+
+
+def load_custom_camera_presets(path: Path) -> dict[str, dict[str, str]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    stored_presets = payload.get("presets") if isinstance(payload, dict) else None
+    return _clean_custom_camera_presets(stored_presets) if isinstance(stored_presets, dict) else {}
+
+
+def save_custom_camera_presets(path: Path, presets: dict[str, dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps({"version": 1, "presets": _clean_custom_camera_presets(presets)}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    except OSError:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 _application_fonts_loaded = False
@@ -269,7 +319,7 @@ class CameraSettingControl(QWidget):
 
 
 class MonitorWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, preset_path: Path | None = None) -> None:
         super().__init__()
         load_application_fonts()
         self.setWindowTitle("Monitor Desktop")
@@ -287,6 +337,8 @@ class MonitorWindow(QMainWindow):
         self.camera_recording = False
         self.active_backend: GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend | None = None
         self.discovered_devices: list[CameraDevice] = []
+        self.preset_path = preset_path or custom_camera_preset_path()
+        self.custom_camera_presets = load_custom_camera_presets(self.preset_path)
         self.frame_count = 0
         self._auto_connect_scheduled = False
 
@@ -717,14 +769,26 @@ class MonitorWindow(QMainWindow):
         self.live_view_button = QPushButton("Start camera live view")
         self.live_view_button.clicked.connect(self.start_camera_live_view)
         layout.addWidget(self.live_view_button)
-        preset_row = QHBoxLayout()
         self.camera_preset_select = QComboBox()
-        self.camera_preset_select.addItems(CAMERA_PRESETS)
-        preset_row.addWidget(self.camera_preset_select, 1)
+        self._refresh_camera_preset_select()
+        layout.addWidget(self.camera_preset_select)
+        preset_actions = QHBoxLayout()
         self.camera_preset_button = QPushButton("Apply setup")
         self.camera_preset_button.clicked.connect(self.apply_camera_preset)
-        preset_row.addWidget(self.camera_preset_button)
-        layout.addLayout(preset_row)
+        preset_actions.addWidget(self.camera_preset_button, 1)
+        self.save_camera_preset_button = QToolButton()
+        self.save_camera_preset_button.setFixedWidth(32)
+        self.save_camera_preset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.save_camera_preset_button.setToolTip("Save current camera settings as a custom setup")
+        self.save_camera_preset_button.clicked.connect(self.save_current_camera_preset)
+        preset_actions.addWidget(self.save_camera_preset_button)
+        self.delete_camera_preset_button = QToolButton()
+        self.delete_camera_preset_button.setFixedWidth(32)
+        self.delete_camera_preset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
+        self.delete_camera_preset_button.setToolTip("Delete selected custom setup")
+        self.delete_camera_preset_button.clicked.connect(self.delete_selected_camera_preset)
+        preset_actions.addWidget(self.delete_camera_preset_button)
+        layout.addLayout(preset_actions)
         action_row = QHBoxLayout()
         self.focus_button = QPushButton("Focus")
         self.focus_button.pressed.connect(lambda: self.run_camera_action("focus"))
@@ -1070,6 +1134,8 @@ class MonitorWindow(QMainWindow):
         self.preview_record_button.setEnabled(enabled)
         self.camera_preset_select.setEnabled(enabled)
         self.camera_preset_button.setEnabled(enabled)
+        self.save_camera_preset_button.setEnabled(enabled)
+        self.delete_camera_preset_button.setEnabled(enabled)
         for control in self.camera_setting_boxes.values():
             control.setEnabled(enabled)
 
@@ -1126,12 +1192,95 @@ class MonitorWindow(QMainWindow):
                 return value
         return None
 
+    def _refresh_camera_preset_select(self, selected: str | None = None) -> None:
+        if selected is None and hasattr(self, "camera_preset_select"):
+            selected = self.camera_preset_select.currentText()
+        names = [*CAMERA_PRESETS, *(f"{CUSTOM_CAMERA_PRESET_PREFIX}{name}" for name in self.custom_camera_presets)]
+        was_blocked = self.camera_preset_select.blockSignals(True)
+        self.camera_preset_select.clear()
+        self.camera_preset_select.addItems(names)
+        if selected in names:
+            self.camera_preset_select.setCurrentText(selected)
+        self.camera_preset_select.blockSignals(was_blocked)
+
+    def _selected_custom_camera_preset(self) -> tuple[str, dict[str, str]] | None:
+        selected = self.camera_preset_select.currentText()
+        if not selected.startswith(CUSTOM_CAMERA_PRESET_PREFIX):
+            return None
+        name = selected.removeprefix(CUSTOM_CAMERA_PRESET_PREFIX)
+        values = self.custom_camera_presets.get(name)
+        return (name, values) if values else None
+
+    def _camera_preset_values(self) -> tuple[str, dict[str, str]] | None:
+        selected = self.camera_preset_select.currentText()
+        if selected in CAMERA_PRESETS:
+            return selected, CAMERA_PRESETS[selected]
+        return self._selected_custom_camera_preset()
+
+    def _write_custom_camera_presets(self) -> bool:
+        try:
+            save_custom_camera_presets(self.preset_path, self.custom_camera_presets)
+        except OSError as exc:
+            self._notify(f"Could not save custom setups: {exc}", error=True)
+            return False
+        return True
+
+    def save_current_camera_preset(self) -> None:
+        if self.active_backend is None:
+            self._notify("Connect a camera before saving a custom setup.", error=True)
+            return
+        values = {
+            setting: control.currentText()
+            for setting, control in self.camera_setting_boxes.items()
+            if control.isEnabled() and control.currentText()
+        }
+        if not values:
+            self._notify("This camera has no writable settings to save.", error=True)
+            return
+        name, accepted = QInputDialog.getText(self, "Save custom setup", "Setup name")
+        name = name.strip()
+        if not accepted or not name:
+            return
+        existing_name = next((item for item in self.custom_camera_presets if item.casefold() == name.casefold()), name)
+        updating = existing_name in self.custom_camera_presets
+        self.custom_camera_presets[existing_name] = values
+        if not self._write_custom_camera_presets():
+            return
+        selected = f"{CUSTOM_CAMERA_PRESET_PREFIX}{existing_name}"
+        self.custom_camera_presets = load_custom_camera_presets(self.preset_path)
+        self._refresh_camera_preset_select(selected)
+        self._notify(f"{'Updated' if updating else 'Saved'} custom setup: {existing_name}.")
+
+    def delete_selected_camera_preset(self) -> None:
+        selected = self._selected_custom_camera_preset()
+        if selected is None:
+            self._notify("Choose a custom setup to delete.", error=True)
+            return
+        name, _ = selected
+        choice = QMessageBox.question(
+            self,
+            "Delete custom setup",
+            f"Delete custom setup '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            return
+        del self.custom_camera_presets[name]
+        if not self._write_custom_camera_presets():
+            return
+        self._refresh_camera_preset_select()
+        self._notify(f"Deleted custom setup: {name}.")
+
     def apply_camera_preset(self) -> None:
         if self.active_backend is None:
             self._notify("Connect a camera before applying a camera setup.", error=True)
             return
-        name = self.camera_preset_select.currentText()
-        requested = CAMERA_PRESETS[name]
+        preset = self._camera_preset_values()
+        if preset is None:
+            self._notify("Choose a camera setup to apply.", error=True)
+            return
+        name, requested = preset
         if not requested:
             self._notify("Camera setup makes no changes.")
             return

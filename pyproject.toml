@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "monitor-desktop"
-version = "0.2.1"
+version = "0.2.2"
 description = "Linux-first desktop monitoring and remote-control app for Sony cameras"
 readme = "README.md"
 requires-python = ">=3.11"
