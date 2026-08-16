@@ -25,6 +25,9 @@ recordings, and still-frame exports stay on the operator's computer.
 - One-click monitor setups for clean viewing, focus, exposure, framing, and a
   director's view. Camera setups are opt-in and only apply settings a connected
   body exposes.
+- Camera-setting controls scrub through the exact values supported by the
+  connected body, while the adjacent value field accepts direct entry and
+  applies with Enter or the check control.
 - Local monitor-feed recording and PNG frame export under `recordings/`.
 - Sony control with a real transport selected per camera:
 

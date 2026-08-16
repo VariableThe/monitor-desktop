@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -169,6 +168,88 @@ class ScopeView(QLabel):
         rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
         image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format.Format_RGB888).copy()
         self.setPixmap(QPixmap.fromImage(image))
+
+
+class CameraSettingControl(QWidget):
+    """Choose a camera setting by its supported steps or an exact typed value."""
+
+    def __init__(self, name: str, values: list[str], on_apply: Any, on_invalid: Any) -> None:
+        super().__init__()
+        self.name = name
+        self._values: list[str] = []
+        self._on_apply = on_apply
+        self._on_invalid = on_invalid
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setToolTip(f"Adjust {name.replace('_', ' ')}")
+        self.slider.sliderReleased.connect(self.apply_current)
+        self.slider.valueChanged.connect(self._sync_value_text)
+        layout.addWidget(self.slider, 1)
+        self.value_input = QLineEdit()
+        self.value_input.setMinimumWidth(100)
+        self.value_input.setMaximumWidth(116)
+        self.value_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.value_input.returnPressed.connect(self.apply_current)
+        layout.addWidget(self.value_input)
+        self.apply_button = QToolButton()
+        self.apply_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.apply_button.setToolTip(f"Apply {name.replace('_', ' ')}")
+        self.apply_button.clicked.connect(self.apply_current)
+        layout.addWidget(self.apply_button)
+        self.set_values(values)
+
+    def values(self) -> list[str]:
+        return self._values.copy()
+
+    def currentText(self) -> str:  # noqa: N802 - matches Qt's selector API
+        return self.value_input.text().strip()
+
+    def setCurrentText(self, value: str) -> None:  # noqa: N802 - matches Qt's selector API
+        match = self._matching_value(value)
+        if match is None:
+            self.value_input.setText(value)
+            return
+        index = self._values.index(match)
+        was_blocked = self.slider.blockSignals(True)
+        self.slider.setValue(index)
+        self.slider.blockSignals(was_blocked)
+        self._set_value_text(match)
+
+    def set_values(self, values: list[str], current: str | None = None) -> None:
+        self._values = list(dict.fromkeys(values))
+        was_blocked = self.slider.blockSignals(True)
+        self.slider.setRange(0, max(0, len(self._values) - 1))
+        self.slider.setValue(self._values.index(current) if current in self._values else 0)
+        self.slider.blockSignals(was_blocked)
+        self._set_value_text(self._values[self.slider.value()] if self._values else "")
+
+    def _matching_value(self, value: str) -> str | None:
+        normalized = value.strip().casefold()
+        for choice in self._values:
+            if choice.casefold() == normalized:
+                return choice
+        if normalized == "auto":
+            return next((choice for choice in self._values if choice.casefold().startswith("auto")), None)
+        return None
+
+    def _set_value_text(self, value: str) -> None:
+        self.value_input.setText(value)
+        self.value_input.setToolTip(value)
+
+    def _sync_value_text(self, index: int) -> None:
+        if self._values:
+            self._set_value_text(self._values[index])
+
+    def apply_current(self) -> None:
+        value = self._matching_value(self.currentText())
+        if value is None:
+            self._on_invalid(self.name)
+            self._sync_value_text(self.slider.value())
+            return
+        self.setCurrentText(value)
+        self._on_apply(self.name, value)
 
 
 class MonitorWindow(QMainWindow):
@@ -638,29 +719,23 @@ class MonitorWindow(QMainWindow):
         self.camera_record_button = QPushButton("Start camera record")
         self.camera_record_button.clicked.connect(self.toggle_camera_recording)
         layout.addWidget(self.camera_record_button)
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.camera_setting_boxes: dict[str, QComboBox] = {}
+        form = QVBoxLayout()
+        form.setSpacing(4)
+        self.camera_setting_boxes: dict[str, CameraSettingControl] = {}
         settings = {
             "iso": ["Auto", "100", "200", "400", "800", "1600", "3200", "6400"],
             "shutter": ["1/25", "1/50", "1/60", "1/100", "1/125", "1/250"],
             "aperture": ["1.4", "1.8", "2.8", "4.0", "5.6", "8.0", "11"],
             "white_balance": ["Auto", "Daylight", "Cloudy", "Incandescent", "Fluorescent"],
+            "focus_mode": ["AF-S", "AF-C", "MF"],
         }
         for name, values in settings.items():
-            row = QWidget()
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            box = QComboBox()
-            box.addItems(values)
-            row_layout.addWidget(box, 1)
-            set_button = QToolButton()
-            set_button.setText("Set")
-            set_button.setToolTip(f"Apply {name.replace('_', ' ')}")
-            set_button.clicked.connect(lambda _checked=False, key=name, combo=box: self.set_camera_setting(key, combo.currentText()))
-            row_layout.addWidget(set_button)
-            form.addRow(name.replace("_", " ").title(), row)
-            self.camera_setting_boxes[name] = box
+            control = CameraSettingControl(name, values, self.set_camera_setting, self._invalid_camera_setting_value)
+            label = QLabel(name.replace("_", " ").title())
+            label.setObjectName("muted")
+            form.addWidget(label)
+            form.addWidget(control)
+            self.camera_setting_boxes[name] = control
         layout.addLayout(form)
         self._set_camera_controls_enabled(False)
         return group
@@ -928,20 +1003,13 @@ class MonitorWindow(QMainWindow):
                     self._set_camera_setting_enabled(combo, False)
                 continue
             current = self.active_backend.current_value(name) if isinstance(self.active_backend, GPhotoBackend) else combo.currentText()
-            combo.clear()
-            combo.addItems(dict.fromkeys(values))
-            if current in values:
-                combo.setCurrentText(current)
+            combo.set_values(values, current)
             if isinstance(self.active_backend, GPhotoBackend):
                 self._set_camera_setting_enabled(combo, self.active_backend.property_writable(name))
 
     @staticmethod
-    def _set_camera_setting_enabled(combo: QComboBox, enabled: bool) -> None:
-        combo.setEnabled(enabled)
-        parent = combo.parentWidget()
-        if parent is not None:
-            for button in parent.findChildren(QToolButton):
-                button.setEnabled(enabled)
+    def _set_camera_setting_enabled(control: CameraSettingControl, enabled: bool) -> None:
+        control.setEnabled(enabled)
 
     def _set_camera_controls_enabled(self, enabled: bool) -> None:
         self.live_view_button.setEnabled(enabled)
@@ -953,12 +1021,8 @@ class MonitorWindow(QMainWindow):
         self.preview_record_button.setEnabled(enabled)
         self.camera_preset_select.setEnabled(enabled)
         self.camera_preset_button.setEnabled(enabled)
-        for combo in self.camera_setting_boxes.values():
-            combo.setEnabled(enabled)
-            parent = combo.parentWidget()
-            if parent is not None:
-                for button in parent.findChildren(QToolButton):
-                    button.setEnabled(enabled)
+        for control in self.camera_setting_boxes.values():
+            control.setEnabled(enabled)
 
     def run_camera_action(self, action: str, quiet: bool = False) -> bool:
         if self.active_backend is None:
@@ -998,9 +1062,12 @@ class MonitorWindow(QMainWindow):
         except CameraError as exc:
             self._notify(str(exc), error=True)
 
+    def _invalid_camera_setting_value(self, name: str) -> None:
+        self._notify(f"Choose a value supported by the camera for {name.replace('_', ' ')}.", error=True)
+
     @staticmethod
-    def _matching_camera_value(combo: QComboBox, requested: str) -> str | None:
-        values = [combo.itemText(index) for index in range(combo.count())]
+    def _matching_camera_value(control: CameraSettingControl, requested: str) -> str | None:
+        values = control.values()
         if requested in values:
             return requested
         requested_lower = requested.casefold()

@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from monitor_desktop.app import MonitorWindow, ScopeView
+from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView
 from monitor_desktop.backends import CameraDevice
 
 
@@ -77,6 +77,25 @@ class ScopeViewTests(unittest.TestCase):
         self.assertIsNotNone(window.current_lut)
         self.assertEqual(window.preview_preset_select.currentText(), "Director's View")
         window.close()
+
+    def test_camera_setting_control_scrubs_and_accepts_typed_values(self) -> None:
+        applied: list[tuple[str, str]] = []
+        invalid: list[str] = []
+        control = CameraSettingControl("iso", ["100", "200", "400"], lambda name, value: applied.append((name, value)), invalid.append)
+
+        control.slider.setValue(2)
+        control.apply_current()
+        self.assertEqual(control.currentText(), "400")
+        self.assertEqual(applied, [("iso", "400")])
+
+        control.value_input.setText("200")
+        control.apply_current()
+        self.assertEqual(control.slider.value(), 1)
+        self.assertEqual(applied[-1], ("iso", "200"))
+
+        control.value_input.setText("333")
+        control.apply_current()
+        self.assertEqual(invalid, ["iso"])
 
 
 if __name__ == "__main__":
