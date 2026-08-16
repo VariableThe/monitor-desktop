@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup run test check
+.PHONY: help setup run test check screenshots
 
 help:
-	@printf '%s\n' "make setup  Create the local virtual environment" "make run    Launch Monitor Desktop" "make test   Run unit tests" "make check  Compile and test"
+	@printf '%s\n' "make setup       Create the local virtual environment" "make run         Launch Monitor Desktop" "make test        Run unit tests" "make check       Compile and test" "make screenshots Capture offline README screenshots"
 
 setup:
 	./scripts/bootstrap.sh
@@ -17,3 +17,6 @@ test:
 check:
 	.venv/bin/python -m compileall monitor_desktop run.py
 	$(MAKE) test
+
+screenshots:
+	QT_QPA_PLATFORM=offscreen .venv/bin/python scripts/capture_docs_screenshots.py
