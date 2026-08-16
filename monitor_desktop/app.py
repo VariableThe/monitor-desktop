@@ -10,7 +10,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QImage, QPixmap
+from PySide6.QtGui import QAction, QFont, QFontDatabase, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -58,43 +58,43 @@ from .video_tools import (
 
 
 APP_STYLE = """
-QMainWindow { background: #0d100f; color: #e6ebe5; }
-QWidget { font-family: "Inter", "SF Pro Text", "Segoe UI", sans-serif; font-size: 13px; }
-QFrame#topbar { background: #141817; border-bottom: 1px solid #2b312e; }
-QFrame#sidebar { background: #151a18; border-color: #2b312e; }
-QFrame#preview_workspace { background: #080a09; }
-QFrame#preview_drawer { background: #151a18; border-left: 1px solid #2b312e; }
-QFrame#preview_footer { background: #111513; border-top: 1px solid #252b27; }
-QFrame#transport { background: #151a18; border: 1px solid #2f3732; border-radius: 5px; }
-QMenuBar, QMenu { background: #141817; color: #e9eee8; }
-QMenuBar::item:selected, QMenu::item:selected { background: #27322d; }
-QLabel#brand { color: #f4f7f2; font-size: 15px; font-weight: 700; }
-QLabel#muted { color: #8f9b93; }
-QLabel#status { color: #aeb9b0; background: #111513; border-top: 1px solid #2b312e; }
-QLabel#timecode { color: #e9c66a; font-family: "Menlo", "SF Mono", monospace; font-size: 14px; font-weight: 700; }
-QLabel#preview_label { color: #9eaaa1; font-size: 12px; font-weight: 650; }
-QGroupBox { background: #151a18; border: 1px solid #303833; border-radius: 5px; margin-top: 13px; padding: 10px 8px 8px; color: #dce4dc; font-weight: 650; }
+QMainWindow { background: #050607; color: #e7e9ee; }
+QWidget { font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace; font-size: 12px; }
+QFrame#topbar { background: #090a0d; border-bottom: 1px solid #20232b; }
+QFrame#sidebar { background: #0b0d12; border-color: #20232b; }
+QFrame#preview_workspace { background: #030405; }
+QFrame#preview_drawer { background: #0b0d12; border-left: 1px solid #20232b; }
+QFrame#preview_footer { background: #090a0d; border-top: 1px solid #20232b; }
+QFrame#transport { background: #090a0d; border: 1px solid #232832; border-radius: 2px; }
+QMenuBar, QMenu { background: #090a0d; color: #e7e9ee; }
+QMenuBar::item:selected, QMenu::item:selected { background: #151923; }
+QLabel#brand { color: #f5f7fb; font-size: 15px; font-weight: 700; }
+QLabel#muted { color: #858b98; }
+QLabel#status { color: #a5acb8; background: #090a0d; border-top: 1px solid #20232b; }
+QLabel#timecode { color: #f05a5f; font-size: 13px; font-weight: 700; }
+QLabel#preview_label { color: #8f96a3; font-size: 11px; font-weight: 700; }
+QGroupBox { background: #0b0d12; border: 1px solid #232832; border-radius: 2px; margin-top: 13px; padding: 10px 8px 8px; color: #dfe4ec; font-weight: 700; }
 QGroupBox::title { subcontrol-origin: margin; left: 9px; padding: 0 4px; }
-QLabel { color: #dfe7df; }
-QLineEdit, QComboBox { background: #202622; border: 1px solid #3b463f; border-radius: 4px; color: #eef4ee; min-height: 28px; padding: 0 8px; }
-QLineEdit:focus, QComboBox:focus { border: 1px solid #72b99e; }
+QLabel { color: #e0e4ec; }
+QLineEdit, QComboBox { background: #10131a; border: 1px solid #2a303b; border-radius: 2px; color: #f1f4f9; min-height: 28px; padding: 0 8px; }
+QLineEdit:focus, QComboBox:focus { border: 1px solid #3b82f6; }
 QComboBox::drop-down { border: 0; width: 24px; }
-QPushButton, QToolButton { background: #242b27; border: 1px solid #3c4740; border-radius: 4px; color: #edf3ed; min-height: 29px; padding: 0 9px; }
-QPushButton:hover, QToolButton:hover { background: #303a34; border-color: #64746a; }
-QPushButton:disabled, QToolButton:disabled { background: #1a1f1c; border-color: #292f2b; color: #667068; }
-QPushButton#primary { background: #23765f; border-color: #48a987; color: #ffffff; font-weight: 650; }
-QPushButton#primary:hover { background: #2b8b70; }
-QPushButton#recording { background: #993f3b; border-color: #d86761; color: #ffffff; font-weight: 650; }
+QPushButton, QToolButton { background: #10131a; border: 1px solid #2a303b; border-radius: 2px; color: #e7eaf0; min-height: 29px; padding: 0 9px; }
+QPushButton:hover, QToolButton:hover { background: #171c26; border-color: #4a5568; }
+QPushButton:disabled, QToolButton:disabled { background: #0a0c10; border-color: #1c2027; color: #59606c; }
+QPushButton#primary { background: #2563eb; border-color: #3b82f6; color: #ffffff; font-weight: 700; }
+QPushButton#primary:hover { background: #1d4ed8; }
+QPushButton#recording { background: #b4232a; border-color: #f05a5f; color: #ffffff; font-weight: 700; }
 QToolButton[mode="true"] { background: transparent; border-color: transparent; min-width: 76px; }
-QToolButton[mode="true"]:checked { background: #273a32; border-color: #4f957c; color: #ffffff; }
+QToolButton[mode="true"]:checked { background: #111b34; border-color: #3b82f6; color: #ffffff; }
 QToolButton[assist="true"] { min-width: 72px; }
-QToolButton[assist="true"]:checked { background: #285f50; border-color: #6eb99e; color: #ffffff; }
+QToolButton[assist="true"]:checked { background: #351318; border-color: #e5484d; color: #ffffff; }
 QToolButton[quick="true"] { min-width: 92px; }
-QToolButton[quick="true"]:checked { background: #285f50; border-color: #6eb99e; color: #ffffff; }
-QSlider::groove:horizontal { height: 4px; background: #3c4640; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: #64ad92; border-radius: 2px; }
-QSlider::handle:horizontal { background: #e5c36a; width: 12px; margin: -5px 0; border-radius: 6px; }
-QScrollArea, QScrollArea > QWidget > QWidget { background: #151a18; border: 0; }
+QToolButton[quick="true"]:checked { background: #351318; border-color: #e5484d; color: #ffffff; }
+QSlider::groove:horizontal { height: 3px; background: #252b36; border-radius: 1px; }
+QSlider::sub-page:horizontal { background: #3b82f6; border-radius: 1px; }
+QSlider::handle:horizontal { background: #f05a5f; width: 11px; margin: -5px 0; border-radius: 5px; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: #0b0d12; border: 0; }
 """
 
 
@@ -114,6 +114,22 @@ CAMERA_PRESETS = {
 }
 
 
+_application_fonts_loaded = False
+
+
+def load_application_fonts() -> None:
+    """Register bundled JetBrains Mono so the interface is consistent cross-platform."""
+    global _application_fonts_loaded
+    if _application_fonts_loaded:
+        return
+    fonts = Path(__file__).resolve().parent / "assets" / "fonts"
+    for filename in ("JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf"):
+        QFontDatabase.addApplicationFont(str(fonts / filename))
+    if app := QApplication.instance():
+        app.setFont(QFont("JetBrains Mono", 12))
+    _application_fonts_loaded = True
+
+
 class VideoSurface(QLabel):
     def __init__(self) -> None:
         super().__init__()
@@ -121,7 +137,7 @@ class VideoSurface(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(560, 360)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        self.setStyleSheet("background: #070806; border: 1px solid #252a24;")
+        self.setStyleSheet("background: #020304; border: 1px solid #1d222b;")
 
     def present(self, frame: np.ndarray) -> None:
         self._frame = frame
@@ -151,7 +167,7 @@ class ScopeView(QLabel):
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setFixedHeight(self.fixed_height)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet("background: #0b0d0a; border: 1px solid #343932;")
+        self.setStyleSheet("background: #07090d; border: 1px solid #252b35;")
 
     def present(self, frame: np.ndarray) -> None:
         self._frame = frame
@@ -255,6 +271,7 @@ class CameraSettingControl(QWidget):
 class MonitorWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        load_application_fonts()
         self.setWindowTitle("Monitor Desktop")
         self.resize(1440, 900)
         self.setMinimumSize(1180, 680)
@@ -271,6 +288,7 @@ class MonitorWindow(QMainWindow):
         self.active_backend: GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend | None = None
         self.discovered_devices: list[CameraDevice] = []
         self.frame_count = 0
+        self._auto_connect_scheduled = False
 
         self._build_ui()
         self._sync_monitor_settings()
@@ -918,6 +936,14 @@ class MonitorWindow(QMainWindow):
             self.writer = None
             self._set_record_button(False)
 
+    def _populate_camera_devices(self, devices: list[CameraDevice]) -> None:
+        self.discovered_devices = devices
+        self.camera_devices.clear()
+        for device in devices:
+            self.camera_devices.addItem(device.name, device)
+        if devices:
+            self.camera_devices.setCurrentIndex(0)
+
     def discover_camera(self) -> None:
         try:
             backend, devices = self._discover_selected_backend()
@@ -925,10 +951,7 @@ class MonitorWindow(QMainWindow):
             self._notify(str(exc), error=True)
             return
         self.active_backend = backend
-        self.discovered_devices = devices
-        self.camera_devices.clear()
-        for device in devices:
-            self.camera_devices.addItem(device.name, device)
+        self._populate_camera_devices(devices)
         if devices:
             self.camera_devices.setCurrentIndex(0)
             self.camera_connection_status.setText(f"Found {len(devices)} camera(s). Select one and connect.")
@@ -936,6 +959,28 @@ class MonitorWindow(QMainWindow):
         else:
             self.camera_connection_status.setText("No camera found. Check the connection or enter its address.")
             self._notify("No camera was discovered.", error=True)
+
+    def auto_connect_usb_camera(self) -> None:
+        """Connect exactly one detected USB camera without changing its settings."""
+        if self.active_backend is not None or not GPhotoBackend.installed():
+            return
+        backend = GPhotoBackend()
+        try:
+            devices = backend.discover()
+        except CameraError:
+            return
+        if len(devices) != 1:
+            if devices:
+                self._populate_camera_devices(devices)
+                self.camera_connection_status.setText(f"Found {len(devices)} USB cameras. Choose one in Advanced mode.")
+            return
+        device = devices[0]
+        self._populate_camera_devices(devices)
+        try:
+            backend.connect(device)
+        except CameraError:
+            return
+        self._complete_camera_connection(backend, device, automatic=True)
 
     def _discover_selected_backend(self) -> tuple[GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend, list[CameraDevice]]:
         index = self.backend_select.currentIndex()
@@ -964,12 +1009,7 @@ class MonitorWindow(QMainWindow):
                 if not isinstance(self.active_backend, expected) or not self.discovered_devices:
                     backend, devices = self._discover_selected_backend()
                     self.active_backend = backend
-                    self.discovered_devices = devices
-                    self.camera_devices.clear()
-                    for found in devices:
-                        self.camera_devices.addItem(found.name, found)
-                    if devices:
-                        self.camera_devices.setCurrentIndex(0)
+                    self._populate_camera_devices(devices)
                 if not self.discovered_devices or self.active_backend is None:
                     raise CameraError("No camera is available to connect.")
                 device = self.camera_devices.currentData()
@@ -984,14 +1024,23 @@ class MonitorWindow(QMainWindow):
             self._set_camera_controls_enabled(False)
             self._notify(str(exc), error=True)
             return
+
+        self._complete_camera_connection(backend, device)
+
+    def _complete_camera_connection(
+        self,
+        backend: GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend,
+        device: CameraDevice,
+        automatic: bool = False,
+    ) -> None:
         self.active_backend = backend
         self.active_camera_label.setText(f"{device.name}\n{backend.name}")
-        self.preview_camera_label.setText(device.name)
+        self.preview_camera_label.setText(f"{device.name} connected")
         self.preview_camera_status.setText(f"Connected via {backend.name}")
         self.camera_connection_status.setText(f"Connected: {device.name}")
         self._set_camera_controls_enabled(True)
         self._load_available_settings()
-        self._notify(f"Connected to {device.name}.")
+        self._notify(f"{'Auto-connected to' if automatic else 'Connected to'} {device.name}.")
 
     def _load_available_settings(self) -> None:
         if not isinstance(self.active_backend, (SonyRemoteApiBackend, GPhotoBackend)):
@@ -1217,7 +1266,13 @@ class MonitorWindow(QMainWindow):
 
     def _notify(self, message: str, error: bool = False) -> None:
         self.status_label.setText(message)
-        self.status_label.setStyleSheet("color: #f08b85; background: #1b1e1a; border-top: 1px solid #343932;" if error else "")
+        self.status_label.setStyleSheet("color: #f05a5f; background: #090a0d; border-top: 1px solid #20232b;" if error else "")
+
+    def showEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        if not self._auto_connect_scheduled:
+            self._auto_connect_scheduled = True
+            QTimer.singleShot(400, self.auto_connect_usb_camera)
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         self._release_capture()

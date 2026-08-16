@@ -28,6 +28,9 @@ recordings, and still-frame exports stay on the operator's computer.
 - Camera-setting controls scrub through the exact values supported by the
   connected body, while the adjacent value field accepts direct entry and
   applies with Enter or the check control.
+- On macOS and Linux, the app auto-connects a single detected `gphoto2` USB
+  camera after launch without changing any camera settings. When more than one
+  camera is found, choose the intended body in Advanced mode.
 - Local monitor-feed recording and PNG frame export under `recordings/`.
 - Sony control with a real transport selected per camera:
 
@@ -54,6 +57,8 @@ dependencies. No global Python packages are needed. The scripts are POSIX shell
 scripts and are supported on macOS and Linux. PySide6 and OpenCV are
 cross-platform; Windows can run network/capture workflows when installed with
 Python, while the USB `gphoto2` path is intentionally limited to macOS/Linux.
+JetBrains Mono Regular and Bold are bundled under the
+[SIL Open Font License 1.1](monitor_desktop/assets/fonts/OFL.txt).
 
 ## Workspaces and looks
 

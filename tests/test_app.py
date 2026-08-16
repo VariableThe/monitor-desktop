@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView
@@ -96,6 +98,42 @@ class ScopeViewTests(unittest.TestCase):
         control.value_input.setText("333")
         control.apply_current()
         self.assertEqual(invalid, ["iso"])
+
+    def test_auto_connect_uses_a_single_discovered_usb_camera(self) -> None:
+        class FakeGPhotoBackend:
+            name = "gphoto2 USB"
+
+            @staticmethod
+            def installed() -> bool:
+                return True
+
+            def discover(self) -> list[CameraDevice]:
+                return [CameraDevice("usb:001,001", "Sony ZV-E10", self.name)]
+
+            def connect(self, device: CameraDevice) -> None:
+                self.connected = device
+
+            def available_values(self, name: str) -> list[str]:
+                return []
+
+            def disconnect(self) -> None:
+                pass
+
+        window = MonitorWindow()
+        with patch("monitor_desktop.app.GPhotoBackend", FakeGPhotoBackend):
+            window.auto_connect_usb_camera()
+
+        self.assertEqual(window.camera_devices.currentText(), "Sony ZV-E10")
+        self.assertEqual(window.preview_camera_label.text(), "Sony ZV-E10 connected")
+        self.assertIn("Auto-connected", window.status_label.text())
+        window.close()
+
+    def test_jetbrains_mono_is_registered_from_the_bundled_font(self) -> None:
+        window = MonitorWindow()
+
+        self.assertIn("JetBrains Mono", QFontDatabase.families())
+        self.assertEqual(window.font().family(), "JetBrains Mono")
+        window.close()
 
 
 if __name__ == "__main__":
