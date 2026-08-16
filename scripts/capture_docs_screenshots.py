@@ -35,6 +35,11 @@ def main() -> int:
     window.set_mode("advanced", announce=False)
     save_window(window, output / "advanced-mode.png")
 
+    window.show_settings()
+    assert window.settings_dialog is not None
+    save_window(window.settings_dialog, output / "settings.png")
+    window.settings_dialog.close()
+
     window.close()
     return 0
 

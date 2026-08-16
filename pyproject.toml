@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "monitor-desktop"
-version = "0.2.2"
+version = "0.2.3"
 description = "Linux-first desktop monitoring and remote-control app for Sony cameras"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,7 @@ dependencies = [
   "numpy>=2.0",
   "opencv-python>=4.10",
   "PySide6>=6.8,<7",
+  "qtawesome>=1.4,<2",
 ]
 
 [project.scripts]

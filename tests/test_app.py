@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
-from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView, load_custom_camera_presets, save_custom_camera_presets
+from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView, app_icon, load_custom_camera_presets, save_custom_camera_presets
 from monitor_desktop.backends import CameraDevice
 
 
@@ -193,6 +193,19 @@ class ScopeViewTests(unittest.TestCase):
 
         self.assertIn("JetBrains Mono", QFontDatabase.families())
         self.assertEqual(window.font().family(), "JetBrains Mono")
+        window.close()
+
+    def test_vector_icons_and_settings_update_control_are_available(self) -> None:
+        window = MonitorWindow()
+
+        self.assertFalse(app_icon("gear").isNull())
+        self.assertFalse(app_icon("folder-open").isNull())
+        window.show_settings()
+
+        assert window.settings_dialog is not None
+        self.assertEqual(window.settings_dialog.update_button.text(), "Update app")
+        self.assertFalse(window.settings_button.icon().isNull())
+        window.settings_dialog.close()
         window.close()
 
 

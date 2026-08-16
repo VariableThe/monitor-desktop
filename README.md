@@ -11,6 +11,8 @@ It is designed for Linux and macOS. Windows can use capture cards, webcams, loca
 | --- | --- |
 | ![Preview mode with no video signal](docs/screenshots/preview-mode.png) | ![Advanced mode with no video signal](docs/screenshots/advanced-mode.png) |
 
+![Settings with in-app update](docs/screenshots/settings.png)
+
 The screenshots intentionally show an offline monitor state. No camera footage is included in this repository.
 
 ## Install and launch
@@ -31,6 +33,14 @@ To make `monitor-desktop` available without its full path, add this once to your
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
+```
+
+## Update
+
+Use the gear button in the app's top bar, open **Settings**, then select **Update app**. The update is installed in the existing isolated environment and takes effect after restart. The same update can be run from a terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VariableThe/monitor-desktop/main/scripts/update.sh | sh
 ```
 
 For a local source checkout instead:
@@ -116,4 +126,4 @@ Monitor Desktop is an early, usable foundation rather than feature parity with e
 
 ## License
 
-Monitor Desktop is released under the [MIT License](LICENSE). `gphoto2`, OpenCV, PySide6, and Sony Camera Remote SDK components remain separate projects under their own licenses. JetBrains Mono Regular and Bold are bundled under the [SIL Open Font License 1.1](monitor_desktop/assets/fonts/OFL.txt).
+Monitor Desktop is released under the [MIT License](LICENSE). `gphoto2`, OpenCV, PySide6, QtAwesome, and Sony Camera Remote SDK components remain separate projects under their own licenses. JetBrains Mono Regular and Bold are bundled under the [SIL Open Font License 1.1](monitor_desktop/assets/fonts/OFL.txt); QtAwesome bundles Font Awesome under its respective font license.

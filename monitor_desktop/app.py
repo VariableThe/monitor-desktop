@@ -10,12 +10,14 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QStandardPaths, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontDatabase, QImage, QPixmap
+import qtawesome as qta
+from PySide6.QtCore import QProcess, QStandardPaths, Qt, QTimer
+from PySide6.QtGui import QAction, QFont, QFontDatabase, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -32,7 +34,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QStackedWidget,
     QSplitter,
-    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -46,6 +47,7 @@ from .backends import (
     SonyRemoteApiBackend,
     SonySdkServerBackend,
 )
+from . import __version__
 from .video_tools import (
     BUILTIN_LOOK_NAMES,
     MonitorSettings,
@@ -61,7 +63,7 @@ from .video_tools import (
 
 
 APP_STYLE = """
-QMainWindow { background: #050607; color: #e7e9ee; }
+QMainWindow, QDialog { background: #050607; color: #e7e9ee; }
 QWidget { font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace; font-size: 12px; }
 QFrame#topbar { background: #090a0d; border-bottom: 1px solid #20232b; }
 QFrame#sidebar { background: #0b0d12; border-color: #20232b; }
@@ -118,6 +120,12 @@ CAMERA_PRESETS = {
 
 CAMERA_SETTING_NAMES = ("iso", "shutter", "aperture", "white_balance", "focus_mode")
 CUSTOM_CAMERA_PRESET_PREFIX = "Custom: "
+UPDATE_SCRIPT_URL = "https://raw.githubusercontent.com/VariableThe/monitor-desktop/main/scripts/update.sh"
+UPDATE_COMMAND = f"curl -fsSL {UPDATE_SCRIPT_URL} | sh"
+
+
+def app_icon(name: str) -> QIcon:
+    return qta.icon(f"fa6s.{name}", color="#dfe5ef", color_active="#ffffff", color_disabled="#59606c")
 
 
 def custom_camera_preset_path() -> Path:
@@ -260,7 +268,7 @@ class CameraSettingControl(QWidget):
         self.value_input.returnPressed.connect(self.apply_current)
         layout.addWidget(self.value_input)
         self.apply_button = QToolButton()
-        self.apply_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.apply_button.setIcon(app_icon("check"))
         self.apply_button.setToolTip(f"Apply {name.replace('_', ' ')}")
         self.apply_button.clicked.connect(self.apply_current)
         layout.addWidget(self.apply_button)
@@ -318,6 +326,44 @@ class CameraSettingControl(QWidget):
         self._on_apply(self.name, value)
 
 
+class SettingsDialog(QDialog):
+    def __init__(self, parent: "MonitorWindow") -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setMinimumWidth(390)
+        self.setStyleSheet(APP_STYLE)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        title = QLabel("Settings")
+        title.setObjectName("brand")
+        layout.addWidget(title)
+        application = QGroupBox("Application")
+        application_layout = QVBoxLayout(application)
+        application_layout.setSpacing(8)
+        version = QLabel(f"Monitor Desktop {__version__}")
+        version.setObjectName("muted")
+        application_layout.addWidget(version)
+        self.update_status = QLabel("Ready to update.")
+        self.update_status.setObjectName("muted")
+        self.update_status.setWordWrap(True)
+        application_layout.addWidget(self.update_status)
+        self.update_button = QPushButton("Update app")
+        self.update_button.setObjectName("primary")
+        self.update_button.setIcon(app_icon("arrows-rotate"))
+        self.update_button.clicked.connect(parent.start_application_update)
+        application_layout.addWidget(self.update_button)
+        layout.addWidget(application)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.close)
+        layout.addWidget(close_button)
+
+    def set_update_state(self, message: str, updating: bool = False) -> None:
+        self.update_status.setText(message)
+        self.update_button.setEnabled(not updating)
+        self.update_button.setText("Updating..." if updating else "Update app")
+
+
 class MonitorWindow(QMainWindow):
     def __init__(self, preset_path: Path | None = None) -> None:
         super().__init__()
@@ -341,6 +387,9 @@ class MonitorWindow(QMainWindow):
         self.custom_camera_presets = load_custom_camera_presets(self.preset_path)
         self.frame_count = 0
         self._auto_connect_scheduled = False
+        self.settings_dialog: SettingsDialog | None = None
+        self.update_process: QProcess | None = None
+        self._update_output = ""
 
         self._build_ui()
         self._sync_monitor_settings()
@@ -435,7 +484,7 @@ class MonitorWindow(QMainWindow):
         layout.addWidget(self.preview_camera_label)
         layout.addStretch(1)
         preview_screenshot = QToolButton()
-        preview_screenshot.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        preview_screenshot.setIcon(app_icon("floppy-disk"))
         preview_screenshot.setToolTip("Save monitor frame")
         preview_screenshot.clicked.connect(self.save_screenshot)
         layout.addWidget(preview_screenshot)
@@ -446,6 +495,7 @@ class MonitorWindow(QMainWindow):
         self.preview_focus_button.released.connect(lambda: self.run_camera_action("release_focus", quiet=True))
         layout.addWidget(self.preview_focus_button)
         self.preview_record_button = QPushButton("Start camera record")
+        self.preview_record_button.setIcon(app_icon("video"))
         self.preview_record_button.clicked.connect(self.toggle_camera_recording)
         layout.addWidget(self.preview_record_button)
         return footer
@@ -547,7 +597,14 @@ class MonitorWindow(QMainWindow):
         self.timecode_label.setObjectName("timecode")
         self.timecode_label.setStyleSheet("color: #e9c66a; font-family: Menlo, SF Mono, monospace; font-size: 14px; font-weight: 700; background: transparent;")
         layout.addWidget(self.timecode_label)
+        self.settings_button = QToolButton()
+        self.settings_button.setFixedSize(32, 30)
+        self.settings_button.setIcon(app_icon("gear"))
+        self.settings_button.setToolTip("Settings")
+        self.settings_button.clicked.connect(self.show_settings)
+        layout.addWidget(self.settings_button)
         self.record_button = QPushButton("Record monitor")
+        self.record_button.setIcon(app_icon("circle"))
         self.record_button.clicked.connect(self.toggle_recording)
         layout.addWidget(self.record_button)
         return bar
@@ -606,15 +663,19 @@ class MonitorWindow(QMainWindow):
         buttons = QHBoxLayout()
         connect = QPushButton("Connect")
         connect.setObjectName("primary")
+        connect.setIcon(app_icon("plug"))
+        connect.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         connect.clicked.connect(self.connect_source)
         buttons.addWidget(connect)
         open_button = QToolButton()
-        open_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
+        open_button.setFixedWidth(32)
+        open_button.setIcon(app_icon("folder-open"))
         open_button.setToolTip("Choose video file")
         open_button.clicked.connect(self.pick_video_file)
         buttons.addWidget(open_button)
         disconnect_button = QToolButton()
-        disconnect_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserStop))
+        disconnect_button.setFixedWidth(32)
+        disconnect_button.setIcon(app_icon("link-slash"))
         disconnect_button.setToolTip("Disconnect video source")
         disconnect_button.clicked.connect(self.disconnect_source)
         buttons.addWidget(disconnect_button)
@@ -636,12 +697,14 @@ class MonitorWindow(QMainWindow):
         self.camera_devices = QComboBox()
         self.camera_devices.setPlaceholderText("Discover a camera")
         layout.addWidget(self.camera_devices)
-        controls = QHBoxLayout()
+        controls = QVBoxLayout()
         discover = QPushButton("Discover")
+        discover.setIcon(app_icon("magnifying-glass"))
         discover.clicked.connect(self.discover_camera)
         controls.addWidget(discover)
         connect = QPushButton("Connect camera")
         connect.setObjectName("primary")
+        connect.setIcon(app_icon("plug"))
         connect.clicked.connect(self.connect_camera)
         controls.addWidget(connect)
         layout.addLayout(controls)
@@ -730,7 +793,7 @@ class MonitorWindow(QMainWindow):
         transport_layout.addWidget(transport_label)
         transport_layout.addStretch(1)
         screenshot = QToolButton()
-        screenshot.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        screenshot.setIcon(app_icon("floppy-disk"))
         screenshot.setToolTip("Save monitor frame")
         screenshot.clicked.connect(self.save_screenshot)
         transport_layout.addWidget(screenshot)
@@ -767,6 +830,7 @@ class MonitorWindow(QMainWindow):
         self.active_camera_label.setWordWrap(True)
         layout.addWidget(self.active_camera_label)
         self.live_view_button = QPushButton("Start camera live view")
+        self.live_view_button.setIcon(app_icon("video"))
         self.live_view_button.clicked.connect(self.start_camera_live_view)
         layout.addWidget(self.live_view_button)
         self.camera_preset_select = QComboBox()
@@ -778,27 +842,30 @@ class MonitorWindow(QMainWindow):
         preset_actions.addWidget(self.camera_preset_button, 1)
         self.save_camera_preset_button = QToolButton()
         self.save_camera_preset_button.setFixedWidth(32)
-        self.save_camera_preset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.save_camera_preset_button.setIcon(app_icon("floppy-disk"))
         self.save_camera_preset_button.setToolTip("Save current camera settings as a custom setup")
         self.save_camera_preset_button.clicked.connect(self.save_current_camera_preset)
         preset_actions.addWidget(self.save_camera_preset_button)
         self.delete_camera_preset_button = QToolButton()
         self.delete_camera_preset_button.setFixedWidth(32)
-        self.delete_camera_preset_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogDiscardButton))
+        self.delete_camera_preset_button.setIcon(app_icon("trash-can"))
         self.delete_camera_preset_button.setToolTip("Delete selected custom setup")
         self.delete_camera_preset_button.clicked.connect(self.delete_selected_camera_preset)
         preset_actions.addWidget(self.delete_camera_preset_button)
         layout.addLayout(preset_actions)
         action_row = QHBoxLayout()
         self.focus_button = QPushButton("Focus")
+        self.focus_button.setIcon(app_icon("crosshairs"))
         self.focus_button.pressed.connect(lambda: self.run_camera_action("focus"))
         self.focus_button.released.connect(lambda: self.run_camera_action("release_focus", quiet=True))
         action_row.addWidget(self.focus_button)
         self.photo_button = QPushButton("Take photo")
+        self.photo_button.setIcon(app_icon("camera"))
         self.photo_button.clicked.connect(lambda: self.run_camera_action("photo"))
         action_row.addWidget(self.photo_button)
         layout.addLayout(action_row)
         self.camera_record_button = QPushButton("Start camera record")
+        self.camera_record_button.setIcon(app_icon("video"))
         self.camera_record_button.clicked.connect(self.toggle_camera_recording)
         layout.addWidget(self.camera_record_button)
         form = QVBoxLayout()
@@ -1165,6 +1232,7 @@ class MonitorWindow(QMainWindow):
     def _set_camera_record_buttons(self) -> None:
         for button in (self.camera_record_button, self.preview_record_button):
             button.setText("Stop camera record" if self.camera_recording else "Start camera record")
+            button.setIcon(app_icon("stop" if self.camera_recording else "video"))
             button.setObjectName("recording" if self.camera_recording else "")
             button.style().unpolish(button)
             button.style().polish(button)
@@ -1362,6 +1430,7 @@ class MonitorWindow(QMainWindow):
 
     def _set_record_button(self, recording: bool) -> None:
         self.record_button.setText("Stop recording" if recording else "Record monitor")
+        self.record_button.setIcon(app_icon("stop" if recording else "circle"))
         self.record_button.setObjectName("recording" if recording else "")
         self.record_button.style().unpolish(self.record_button)
         self.record_button.style().polish(self.record_button)
@@ -1416,6 +1485,54 @@ class MonitorWindow(QMainWindow):
     def _notify(self, message: str, error: bool = False) -> None:
         self.status_label.setText(message)
         self.status_label.setStyleSheet("color: #f05a5f; background: #090a0d; border-top: 1px solid #20232b;" if error else "")
+
+    def show_settings(self) -> None:
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self)
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+
+    def start_application_update(self) -> None:
+        if sys.platform == "win32":
+            if self.settings_dialog is not None:
+                self.settings_dialog.set_update_state("In-app updates are currently available on macOS and Linux.")
+            return
+        if self.update_process is not None and self.update_process.state() != QProcess.ProcessState.NotRunning:
+            return
+        if self.settings_dialog is None:
+            self.show_settings()
+        assert self.settings_dialog is not None
+        self._update_output = ""
+        self.settings_dialog.set_update_state("Downloading and installing the latest release...", updating=True)
+        process = QProcess(self)
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        process.readyReadStandardOutput.connect(self._read_update_output)
+        process.finished.connect(self._finish_application_update)
+        process.errorOccurred.connect(self._handle_update_error)
+        self.update_process = process
+        process.start("/bin/sh", ["-c", UPDATE_COMMAND])
+
+    def _read_update_output(self) -> None:
+        if self.update_process is None:
+            return
+        self._update_output += bytes(self.update_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+
+    def _finish_application_update(self, exit_code: int, _exit_status: QProcess.ExitStatus) -> None:
+        if self.settings_dialog is None:
+            return
+        if exit_code == 0:
+            message = "Update installed. Restart Monitor Desktop to use it."
+            self.settings_dialog.set_update_state(message)
+            self._notify(message)
+        else:
+            detail = next((line for line in reversed(self._update_output.splitlines()) if line.strip()), "The updater exited unexpectedly.")
+            self.settings_dialog.set_update_state(f"Update failed: {detail}")
+            self._notify(f"Update failed: {detail}", error=True)
+
+    def _handle_update_error(self, _error: QProcess.ProcessError) -> None:
+        if self.settings_dialog is not None:
+            self.settings_dialog.set_update_state("Could not start the updater.")
 
     def showEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         super().showEvent(event)
