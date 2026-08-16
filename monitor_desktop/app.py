@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QStackedWidget,
     QSplitter,
     QStyle,
     QToolButton,
@@ -43,7 +45,9 @@ from .backends import (
     SonySdkServerBackend,
 )
 from .video_tools import (
+    BUILTIN_LOOK_NAMES,
     MonitorSettings,
+    built_in_lut,
     fit_frame_to_box,
     load_cube_lut,
     make_histogram,
@@ -55,35 +59,60 @@ from .video_tools import (
 
 
 APP_STYLE = """
-QMainWindow { background: #151714; color: #ecf0eb; }
-QWidget { font-family: "Inter", "Segoe UI", sans-serif; font-size: 13px; }
-QFrame#topbar { background: #1b1e1a; border-bottom: 1px solid #343932; }
-QFrame#sidebar { background: #1b1e1a; border-color: #343932; }
-QMenuBar, QMenu { background: #1b1e1a; color: #edf2eb; }
-QMenuBar::item:selected, QMenu::item:selected { background: #394138; }
-QLabel#brand { color: #f6f8f3; font-size: 16px; font-weight: 700; }
-QLabel#muted { color: #98a198; }
-QLabel#status { color: #b9c5bb; background: #1b1e1a; border-top: 1px solid #343932; }
-QLabel#timecode { color: #f4ca57; font-family: "Menlo", monospace; font-size: 14px; font-weight: 700; }
-QGroupBox { background: #1b1e1a; border: 1px solid #343932; border-radius: 5px; margin-top: 13px; padding: 10px 8px 8px; color: #dbe2d9; font-weight: 650; }
+QMainWindow { background: #0d100f; color: #e6ebe5; }
+QWidget { font-family: "Inter", "SF Pro Text", "Segoe UI", sans-serif; font-size: 13px; }
+QFrame#topbar { background: #141817; border-bottom: 1px solid #2b312e; }
+QFrame#sidebar { background: #151a18; border-color: #2b312e; }
+QFrame#preview_workspace { background: #080a09; }
+QFrame#preview_drawer { background: #151a18; border-left: 1px solid #2b312e; }
+QFrame#preview_footer { background: #111513; border-top: 1px solid #252b27; }
+QFrame#transport { background: #151a18; border: 1px solid #2f3732; border-radius: 5px; }
+QMenuBar, QMenu { background: #141817; color: #e9eee8; }
+QMenuBar::item:selected, QMenu::item:selected { background: #27322d; }
+QLabel#brand { color: #f4f7f2; font-size: 15px; font-weight: 700; }
+QLabel#muted { color: #8f9b93; }
+QLabel#status { color: #aeb9b0; background: #111513; border-top: 1px solid #2b312e; }
+QLabel#timecode { color: #e9c66a; font-family: "Menlo", "SF Mono", monospace; font-size: 14px; font-weight: 700; }
+QLabel#preview_label { color: #9eaaa1; font-size: 12px; font-weight: 650; }
+QGroupBox { background: #151a18; border: 1px solid #303833; border-radius: 5px; margin-top: 13px; padding: 10px 8px 8px; color: #dce4dc; font-weight: 650; }
 QGroupBox::title { subcontrol-origin: margin; left: 9px; padding: 0 4px; }
-QLabel { color: #dfe6df; }
-QLineEdit, QComboBox { background: #242823; border: 1px solid #454c43; border-radius: 4px; color: #f1f5f0; min-height: 28px; padding: 0 8px; }
-QLineEdit:focus, QComboBox:focus { border: 1px solid #86c7b0; }
+QLabel { color: #dfe7df; }
+QLineEdit, QComboBox { background: #202622; border: 1px solid #3b463f; border-radius: 4px; color: #eef4ee; min-height: 28px; padding: 0 8px; }
+QLineEdit:focus, QComboBox:focus { border: 1px solid #72b99e; }
 QComboBox::drop-down { border: 0; width: 24px; }
-QPushButton, QToolButton { background: #2c322c; border: 1px solid #485149; border-radius: 4px; color: #edf2eb; min-height: 29px; padding: 0 9px; }
-QPushButton:hover, QToolButton:hover { background: #394138; border-color: #748073; }
-QPushButton:disabled, QToolButton:disabled { background: #222620; border-color: #30342f; color: #687068; }
-QPushButton#primary { background: #2d806c; border-color: #45aa8d; color: #ffffff; font-weight: 650; }
-QPushButton#primary:hover { background: #379a80; }
-QPushButton#recording { background: #9a3937; border-color: #e2635f; color: #ffffff; font-weight: 650; }
+QPushButton, QToolButton { background: #242b27; border: 1px solid #3c4740; border-radius: 4px; color: #edf3ed; min-height: 29px; padding: 0 9px; }
+QPushButton:hover, QToolButton:hover { background: #303a34; border-color: #64746a; }
+QPushButton:disabled, QToolButton:disabled { background: #1a1f1c; border-color: #292f2b; color: #667068; }
+QPushButton#primary { background: #23765f; border-color: #48a987; color: #ffffff; font-weight: 650; }
+QPushButton#primary:hover { background: #2b8b70; }
+QPushButton#recording { background: #993f3b; border-color: #d86761; color: #ffffff; font-weight: 650; }
+QToolButton[mode="true"] { background: transparent; border-color: transparent; min-width: 76px; }
+QToolButton[mode="true"]:checked { background: #273a32; border-color: #4f957c; color: #ffffff; }
 QToolButton[assist="true"] { min-width: 72px; }
-QToolButton[assist="true"]:checked { background: #2b6659; border-color: #74bfaa; color: #ffffff; }
-QSlider::groove:horizontal { height: 4px; background: #454c43; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: #6ab69e; border-radius: 2px; }
-QSlider::handle:horizontal { background: #f1ca5b; width: 13px; margin: -5px 0; border-radius: 6px; }
-QScrollArea, QScrollArea > QWidget > QWidget { background: #1b1e1a; border: 0; }
+QToolButton[assist="true"]:checked { background: #285f50; border-color: #6eb99e; color: #ffffff; }
+QToolButton[quick="true"] { min-width: 92px; }
+QToolButton[quick="true"]:checked { background: #285f50; border-color: #6eb99e; color: #ffffff; }
+QSlider::groove:horizontal { height: 4px; background: #3c4640; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #64ad92; border-radius: 2px; }
+QSlider::handle:horizontal { background: #e5c36a; width: 12px; margin: -5px 0; border-radius: 6px; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: #151a18; border: 0; }
 """
+
+
+MONITOR_PRESETS = {
+    "Clean Preview": {"zebra": False, "false_color": False, "peaking": False, "guide": False, "flip": False, "desqueeze": "1.00x", "look": "Neutral"},
+    "Focus Check": {"zebra": False, "false_color": False, "peaking": True, "guide": False, "flip": False, "desqueeze": "1.00x", "look": "Neutral"},
+    "Exposure Check": {"zebra": True, "false_color": False, "peaking": False, "guide": False, "flip": False, "desqueeze": "1.00x", "look": "Neutral"},
+    "Framing": {"zebra": False, "false_color": False, "peaking": False, "guide": True, "flip": False, "desqueeze": "1.00x", "look": "Neutral"},
+    "Director's View": {"zebra": True, "false_color": False, "peaking": True, "guide": True, "flip": False, "desqueeze": "1.00x", "look": "Warm Film"},
+}
+
+CAMERA_PRESETS = {
+    "No camera changes": {},
+    "24 fps daylight": {"iso": "100", "shutter": "1/50", "white_balance": "Daylight"},
+    "24 fps indoor": {"iso": "800", "shutter": "1/50", "white_balance": "Auto"},
+    "24 fps low light": {"iso": "1600", "shutter": "1/50", "white_balance": "Auto"},
+}
 
 
 class VideoSurface(QLabel):
@@ -156,6 +185,8 @@ class MonitorWindow(QMainWindow):
         self.writer: cv2.VideoWriter | None = None
         self.recording_path: Path | None = None
         self.current_lut: np.ndarray | None = None
+        self.current_look = "Neutral"
+        self.camera_recording = False
         self.active_backend: GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend | None = None
         self.discovered_devices: list[CameraDevice] = []
         self.frame_count = 0
@@ -172,6 +203,7 @@ class MonitorWindow(QMainWindow):
         self.setStyleSheet(APP_STYLE)
         self.setCentralWidget(self._build_workspace())
         self._build_menu()
+        self.menuBar().hide()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -193,19 +225,136 @@ class MonitorWindow(QMainWindow):
         layout.setSpacing(0)
         layout.addWidget(self._build_topbar())
 
+        self.mode_stack = QStackedWidget()
+        self.preview_workspace = self._build_preview_workspace()
+        self.advanced_workspace = self._build_advanced_workspace()
+        self.mode_stack.addWidget(self.preview_workspace)
+        self.mode_stack.addWidget(self.advanced_workspace)
+        layout.addWidget(self.mode_stack, 1)
+
+        self.status_label = QLabel("Ready. Connect a capture device, video source, or Sony camera.")
+        self.status_label.setObjectName("status")
+        self.status_label.setContentsMargins(14, 7, 14, 7)
+        layout.addWidget(self.status_label)
+        self.set_mode("preview", announce=False)
+        return root
+
+    def _build_advanced_workspace(self) -> QWidget:
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(self._build_left_sidebar())
         splitter.addWidget(self._build_monitor_area())
         splitter.addWidget(self._build_right_sidebar())
         splitter.setSizes([300, 820, 320])
-        layout.addWidget(splitter, 1)
+        return splitter
 
-        self.status_label = QLabel("Ready. Connect a capture device, video source, or Sony camera.")
-        self.status_label.setObjectName("status")
-        self.status_label.setContentsMargins(14, 7, 14, 7)
-        layout.addWidget(self.status_label)
-        return root
+    def _build_preview_workspace(self) -> QWidget:
+        page = QFrame()
+        page.setObjectName("preview_workspace")
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.preview_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.preview_splitter.setChildrenCollapsible(False)
+        monitor = QFrame()
+        monitor_layout = QVBoxLayout(monitor)
+        monitor_layout.setContentsMargins(12, 12, 12, 0)
+        monitor_layout.setSpacing(0)
+        self.preview_surface = VideoSurface()
+        self.preview_surface.setMinimumSize(640, 420)
+        monitor_layout.addWidget(self.preview_surface, 1)
+        monitor_layout.addWidget(self._build_preview_footer())
+        self.preview_splitter.addWidget(monitor)
+        self.preview_drawer = self._build_preview_drawer()
+        self.preview_splitter.addWidget(self.preview_drawer)
+        self.preview_splitter.setSizes([1100, 280])
+        layout.addWidget(self.preview_splitter)
+        self.preview_drawer.hide()
+        return page
+
+    def _build_preview_footer(self) -> QWidget:
+        footer = QFrame()
+        footer.setObjectName("preview_footer")
+        layout = QHBoxLayout(footer)
+        layout.setContentsMargins(10, 7, 10, 7)
+        layout.setSpacing(7)
+        self.preview_camera_label = QLabel("Connect a Sony camera in Advanced mode to unlock camera controls.")
+        self.preview_camera_label.setObjectName("muted")
+        layout.addWidget(self.preview_camera_label)
+        layout.addStretch(1)
+        preview_screenshot = QToolButton()
+        preview_screenshot.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        preview_screenshot.setToolTip("Save monitor frame")
+        preview_screenshot.clicked.connect(self.save_screenshot)
+        layout.addWidget(preview_screenshot)
+        self.preview_focus_button = QToolButton()
+        self.preview_focus_button.setText("Focus")
+        self.preview_focus_button.setToolTip("Request autofocus")
+        self.preview_focus_button.pressed.connect(lambda: self.run_camera_action("focus"))
+        self.preview_focus_button.released.connect(lambda: self.run_camera_action("release_focus", quiet=True))
+        layout.addWidget(self.preview_focus_button)
+        self.preview_record_button = QPushButton("Start camera record")
+        self.preview_record_button.clicked.connect(self.toggle_camera_recording)
+        layout.addWidget(self.preview_record_button)
+        return footer
+
+    def _build_preview_drawer(self) -> QWidget:
+        drawer = QFrame()
+        drawer.setObjectName("preview_drawer")
+        drawer.setMinimumWidth(260)
+        drawer.setMaximumWidth(300)
+        layout = QVBoxLayout(drawer)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Quick monitor")
+        title.setObjectName("brand")
+        layout.addWidget(title)
+        self.preview_camera_status = QLabel("No Sony camera connected")
+        self.preview_camera_status.setObjectName("muted")
+        self.preview_camera_status.setWordWrap(True)
+        layout.addWidget(self.preview_camera_status)
+        self.preview_live_view_button = QPushButton("Start camera live view")
+        self.preview_live_view_button.setObjectName("primary")
+        self.preview_live_view_button.clicked.connect(self.start_camera_live_view)
+        layout.addWidget(self.preview_live_view_button)
+
+        layout.addWidget(QLabel("Monitor setup"))
+        self.preview_preset_select = QComboBox()
+        self.preview_preset_select.addItems(MONITOR_PRESETS)
+        self.preview_preset_select.currentTextChanged.connect(self.apply_monitor_preset)
+        layout.addWidget(self.preview_preset_select)
+
+        quick_tools = QGridLayout()
+        quick_tools.setHorizontalSpacing(6)
+        quick_tools.setVerticalSpacing(6)
+        self.preview_assist_buttons: dict[str, QToolButton] = {}
+        for index, (key, title) in enumerate((("zebra", "Zebra"), ("peaking", "Peaking"), ("guide", "Guides"))):
+            button = QToolButton()
+            button.setText(title)
+            button.setCheckable(True)
+            button.setProperty("quick", True)
+            button.toggled.connect(lambda checked, name=key: self._set_assist(name, checked))
+            quick_tools.addWidget(button, index // 2, index % 2)
+            self.preview_assist_buttons[key] = button
+        layout.addLayout(quick_tools)
+
+        layout.addWidget(QLabel("Preview look"))
+        self.preview_look_select = QComboBox()
+        self.preview_look_select.addItems([*BUILTIN_LOOK_NAMES, "Custom LUT"])
+        self.preview_look_select.currentTextChanged.connect(self._on_look_selected)
+        layout.addWidget(self.preview_look_select)
+        self.preview_lut_amount_label = QLabel("Look strength: 100%")
+        self.preview_lut_amount_label.setObjectName("muted")
+        layout.addWidget(self.preview_lut_amount_label)
+        self.preview_lut_amount_slider = self._slider(0, 100, 100, self._on_lut_amount_changed)
+        layout.addWidget(self.preview_lut_amount_slider)
+        load_lut = QPushButton("Load custom LUT")
+        load_lut.clicked.connect(self.pick_lut)
+        layout.addWidget(load_lut)
+        layout.addStretch(1)
+        return drawer
 
     def _build_topbar(self) -> QWidget:
         bar = QFrame()
@@ -215,21 +364,59 @@ class MonitorWindow(QMainWindow):
         layout.setSpacing(10)
         brand = QLabel("MONITOR DESKTOP")
         brand.setObjectName("brand")
-        brand.setStyleSheet("color: #f6f8f3; font-size: 16px; font-weight: 700; background: transparent;")
+        brand.setStyleSheet("color: #f4f7f2; font-size: 15px; font-weight: 700; background: transparent;")
         layout.addWidget(brand)
         self.connection_label = QLabel("NO SOURCE")
         self.connection_label.setObjectName("muted")
-        self.connection_label.setStyleSheet("color: #98a198; background: transparent;")
+        self.connection_label.setStyleSheet("color: #8f9b93; background: transparent;")
         layout.addWidget(self.connection_label)
         layout.addStretch(1)
+        self.mode_group = QButtonGroup(self)
+        self.preview_mode_button = QToolButton()
+        self.preview_mode_button.setText("Preview")
+        self.preview_mode_button.setCheckable(True)
+        self.preview_mode_button.setProperty("mode", True)
+        self.preview_mode_button.clicked.connect(lambda: self.set_mode("preview"))
+        self.mode_group.addButton(self.preview_mode_button)
+        layout.addWidget(self.preview_mode_button)
+        self.advanced_mode_button = QToolButton()
+        self.advanced_mode_button.setText("Advanced")
+        self.advanced_mode_button.setCheckable(True)
+        self.advanced_mode_button.setProperty("mode", True)
+        self.advanced_mode_button.clicked.connect(lambda: self.set_mode("advanced"))
+        self.mode_group.addButton(self.advanced_mode_button)
+        layout.addWidget(self.advanced_mode_button)
+        self.preview_tools_button = QToolButton()
+        self.preview_tools_button.setText("Tools")
+        self.preview_tools_button.setCheckable(True)
+        self.preview_tools_button.setToolTip("Show quick preview controls")
+        self.preview_tools_button.toggled.connect(self.toggle_preview_tools)
+        layout.addWidget(self.preview_tools_button)
         self.timecode_label = QLabel("00:00:00")
         self.timecode_label.setObjectName("timecode")
-        self.timecode_label.setStyleSheet("color: #f4ca57; font-family: Menlo, monospace; font-size: 14px; font-weight: 700; background: transparent;")
+        self.timecode_label.setStyleSheet("color: #e9c66a; font-family: Menlo, SF Mono, monospace; font-size: 14px; font-weight: 700; background: transparent;")
         layout.addWidget(self.timecode_label)
         self.record_button = QPushButton("Record monitor")
         self.record_button.clicked.connect(self.toggle_recording)
         layout.addWidget(self.record_button)
         return bar
+
+    def set_mode(self, mode: str, announce: bool = True) -> None:
+        preview = mode == "preview"
+        self.mode_stack.setCurrentIndex(0 if preview else 1)
+        self.preview_mode_button.setChecked(preview)
+        self.advanced_mode_button.setChecked(not preview)
+        self.preview_tools_button.setVisible(preview)
+        self.status_label.setVisible(not preview)
+        if preview and self.latest_frame is not None:
+            self.preview_surface.present(self.latest_frame)
+        if announce:
+            self._notify("Preview mode" if preview else "Advanced mode")
+
+    def toggle_preview_tools(self, visible: bool) -> None:
+        self.preview_drawer.setVisible(visible)
+        if visible:
+            self.preview_splitter.setSizes([max(720, self.preview_splitter.width() - 280), 280])
 
     def _build_left_sidebar(self) -> QWidget:
         frame = QFrame()
@@ -318,6 +505,11 @@ class MonitorWindow(QMainWindow):
         group = QGroupBox("Monitor assists")
         layout = QVBoxLayout(group)
         layout.setSpacing(7)
+        layout.addWidget(QLabel("Monitor setup"))
+        self.monitor_preset_select = QComboBox()
+        self.monitor_preset_select.addItems(MONITOR_PRESETS)
+        self.monitor_preset_select.currentTextChanged.connect(self.apply_monitor_preset)
+        layout.addWidget(self.monitor_preset_select)
         toggle_grid = QGridLayout()
         toggle_grid.setHorizontalSpacing(6)
         toggle_grid.setVerticalSpacing(6)
@@ -329,7 +521,7 @@ class MonitorWindow(QMainWindow):
             button.setText(title)
             button.setCheckable(True)
             button.setProperty("assist", True)
-            button.toggled.connect(self._sync_monitor_settings)
+            button.toggled.connect(lambda checked, name=key: self._set_assist(name, checked))
             toggle_grid.addWidget(button, index // 2, index % 2)
             self.assist_buttons[key] = button
         layout.addLayout(toggle_grid)
@@ -348,14 +540,27 @@ class MonitorWindow(QMainWindow):
         self.desqueeze_select.currentIndexChanged.connect(self._sync_monitor_settings)
         desqueeze_row.addWidget(self.desqueeze_select, 1)
         layout.addLayout(desqueeze_row)
+        layout.addWidget(QLabel("Preview look"))
+        self.look_select = QComboBox()
+        self.look_select.addItems([*BUILTIN_LOOK_NAMES, "Custom LUT"])
+        self.look_select.currentTextChanged.connect(self._on_look_selected)
+        layout.addWidget(self.look_select)
+        self.lut_amount_label = QLabel("Look strength: 100%")
+        self.lut_amount_label.setObjectName("muted")
+        layout.addWidget(self.lut_amount_label)
+        self.lut_amount_slider = self._slider(0, 100, 100, self._on_lut_amount_changed)
+        layout.addWidget(self.lut_amount_slider)
         lut_row = QHBoxLayout()
-        self.lut_label = QLabel("No LUT loaded")
+        self.lut_label = QLabel("Neutral preview")
         self.lut_label.setObjectName("muted")
         lut_row.addWidget(self.lut_label, 1)
         lut_button = QPushButton("Load LUT")
         lut_button.clicked.connect(self.pick_lut)
         lut_row.addWidget(lut_button)
         layout.addLayout(lut_row)
+        clear_lut = QPushButton("Clear custom LUT")
+        clear_lut.clicked.connect(self.clear_custom_lut)
+        layout.addWidget(clear_lut)
         return group
 
     def _build_monitor_area(self) -> QWidget:
@@ -366,10 +571,12 @@ class MonitorWindow(QMainWindow):
         self.video_surface = VideoSurface()
         layout.addWidget(self.video_surface, 1)
         transport = QFrame()
-        transport.setStyleSheet("background: #1b1e1a; border: 1px solid #343932; border-radius: 5px;")
+        transport.setObjectName("transport")
         transport_layout = QHBoxLayout(transport)
         transport_layout.setContentsMargins(8, 6, 8, 6)
-        transport_layout.addWidget(QLabel("MONITOR OUTPUT"))
+        transport_label = QLabel("ADVANCED MONITOR")
+        transport_label.setObjectName("preview_label")
+        transport_layout.addWidget(transport_label)
         transport_layout.addStretch(1)
         screenshot = QToolButton()
         screenshot.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
@@ -411,6 +618,14 @@ class MonitorWindow(QMainWindow):
         self.live_view_button = QPushButton("Start camera live view")
         self.live_view_button.clicked.connect(self.start_camera_live_view)
         layout.addWidget(self.live_view_button)
+        preset_row = QHBoxLayout()
+        self.camera_preset_select = QComboBox()
+        self.camera_preset_select.addItems(CAMERA_PRESETS)
+        preset_row.addWidget(self.camera_preset_select, 1)
+        self.camera_preset_button = QPushButton("Apply setup")
+        self.camera_preset_button.clicked.connect(self.apply_camera_preset)
+        preset_row.addWidget(self.camera_preset_button)
+        layout.addLayout(preset_row)
         action_row = QHBoxLayout()
         self.focus_button = QPushButton("Focus")
         self.focus_button.pressed.connect(lambda: self.run_camera_action("focus"))
@@ -508,6 +723,77 @@ class MonitorWindow(QMainWindow):
         self.settings.zebra_level = self.zebra_slider.value()
         self.settings.peaking_strength = self.peaking_slider.value()
         self.settings.desqueeze = float(self.desqueeze_select.currentText().rstrip("x"))
+
+    def _set_assist(self, key: str, enabled: bool) -> None:
+        for buttons in (self.assist_buttons, self.preview_assist_buttons):
+            button = buttons.get(key)
+            if button is None or button.isChecked() == enabled:
+                continue
+            was_blocked = button.blockSignals(True)
+            button.setChecked(enabled)
+            button.blockSignals(was_blocked)
+        self._sync_monitor_settings()
+
+    @staticmethod
+    def _set_combo_value(combo: QComboBox, value: str) -> None:
+        was_blocked = combo.blockSignals(True)
+        combo.setCurrentText(value)
+        combo.blockSignals(was_blocked)
+
+    @staticmethod
+    def _set_slider_value(slider: QSlider, value: int) -> None:
+        was_blocked = slider.blockSignals(True)
+        slider.setValue(value)
+        slider.blockSignals(was_blocked)
+
+    def _set_monitor_preset_value(self, name: str) -> None:
+        self._set_combo_value(self.monitor_preset_select, name)
+        self._set_combo_value(self.preview_preset_select, name)
+
+    def apply_monitor_preset(self, name: str) -> None:
+        preset = MONITOR_PRESETS.get(name)
+        if preset is None:
+            return
+        for key in ("zebra", "false_color", "peaking", "guide", "flip"):
+            self._set_assist(key, bool(preset[key]))
+        self._set_combo_value(self.desqueeze_select, str(preset["desqueeze"]))
+        self._apply_builtin_look(str(preset["look"]), notify=False)
+        self._set_monitor_preset_value(name)
+        self._sync_monitor_settings()
+        self._notify(f"Monitor setup: {name}.")
+
+    def _on_look_selected(self, name: str) -> None:
+        if name == "Custom LUT":
+            if self.current_look != "Custom LUT":
+                self.pick_lut()
+            return
+        self._apply_builtin_look(name)
+
+    def _apply_builtin_look(self, name: str, notify: bool = True) -> None:
+        self.current_lut = built_in_lut(name)
+        self.current_look = name
+        self.settings.lut_path = ""
+        self.lut_label.setText("Neutral preview" if name == "Neutral" else f"Built-in look: {name}")
+        self._sync_look_controls()
+        if notify:
+            self._notify(f"Preview look: {name}.")
+
+    def _on_lut_amount_changed(self, amount: int) -> None:
+        self.settings.lut_amount = amount / 100
+        self.lut_amount_label.setText(f"Look strength: {amount}%")
+        self.preview_lut_amount_label.setText(f"Look strength: {amount}%")
+        for slider in (self.lut_amount_slider, self.preview_lut_amount_slider):
+            if slider.value() != amount:
+                self._set_slider_value(slider, amount)
+
+    def _sync_look_controls(self) -> None:
+        self._set_combo_value(self.look_select, self.current_look)
+        self._set_combo_value(self.preview_look_select, self.current_look)
+        self._on_lut_amount_changed(round(self.settings.lut_amount * 100))
+
+    def clear_custom_lut(self) -> None:
+        self._apply_builtin_look("Neutral", notify=False)
+        self._notify("Custom LUT cleared.")
 
     def pick_video_file(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Open video source", str(Path.home()), "Video files (*.mp4 *.mov *.mkv *.avi *.m4v);;All files (*)")
@@ -625,6 +911,8 @@ class MonitorWindow(QMainWindow):
             return
         self.active_backend = backend
         self.active_camera_label.setText(f"{device.name}\n{backend.name}")
+        self.preview_camera_label.setText(device.name)
+        self.preview_camera_status.setText(f"Connected via {backend.name}")
         self.camera_connection_status.setText(f"Connected: {device.name}")
         self._set_camera_controls_enabled(True)
         self._load_available_settings()
@@ -639,7 +927,7 @@ class MonitorWindow(QMainWindow):
                 if isinstance(self.active_backend, GPhotoBackend):
                     self._set_camera_setting_enabled(combo, False)
                 continue
-            current = combo.currentText()
+            current = self.active_backend.current_value(name) if isinstance(self.active_backend, GPhotoBackend) else combo.currentText()
             combo.clear()
             combo.addItems(dict.fromkeys(values))
             if current in values:
@@ -657,9 +945,14 @@ class MonitorWindow(QMainWindow):
 
     def _set_camera_controls_enabled(self, enabled: bool) -> None:
         self.live_view_button.setEnabled(enabled)
+        self.preview_live_view_button.setEnabled(enabled)
         self.focus_button.setEnabled(enabled)
+        self.preview_focus_button.setEnabled(enabled)
         self.photo_button.setEnabled(enabled)
         self.camera_record_button.setEnabled(enabled)
+        self.preview_record_button.setEnabled(enabled)
+        self.camera_preset_select.setEnabled(enabled)
+        self.camera_preset_button.setEnabled(enabled)
         for combo in self.camera_setting_boxes.values():
             combo.setEnabled(enabled)
             parent = combo.parentWidget()
@@ -684,13 +977,18 @@ class MonitorWindow(QMainWindow):
         return True
 
     def toggle_camera_recording(self) -> None:
-        starting = self.camera_record_button.text().startswith("Start")
+        starting = not self.camera_recording
         if not self.run_camera_action("record_start" if starting else "record_stop"):
             return
-        self.camera_record_button.setText("Stop camera record" if starting else "Start camera record")
-        self.camera_record_button.setObjectName("recording" if starting else "")
-        self.camera_record_button.style().unpolish(self.camera_record_button)
-        self.camera_record_button.style().polish(self.camera_record_button)
+        self.camera_recording = starting
+        self._set_camera_record_buttons()
+
+    def _set_camera_record_buttons(self) -> None:
+        for button in (self.camera_record_button, self.preview_record_button):
+            button.setText("Stop camera record" if self.camera_recording else "Start camera record")
+            button.setObjectName("recording" if self.camera_recording else "")
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def set_camera_setting(self, name: str, value: str) -> None:
         if self.active_backend is None:
@@ -699,6 +997,48 @@ class MonitorWindow(QMainWindow):
             self._notify(self.active_backend.set_property(name, value))
         except CameraError as exc:
             self._notify(str(exc), error=True)
+
+    @staticmethod
+    def _matching_camera_value(combo: QComboBox, requested: str) -> str | None:
+        values = [combo.itemText(index) for index in range(combo.count())]
+        if requested in values:
+            return requested
+        requested_lower = requested.casefold()
+        for value in values:
+            lowered = value.casefold()
+            if lowered == requested_lower or (requested_lower == "auto" and lowered.startswith("auto")):
+                return value
+        return None
+
+    def apply_camera_preset(self) -> None:
+        if self.active_backend is None:
+            self._notify("Connect a camera before applying a camera setup.", error=True)
+            return
+        name = self.camera_preset_select.currentText()
+        requested = CAMERA_PRESETS[name]
+        if not requested:
+            self._notify("Camera setup makes no changes.")
+            return
+        applied: list[str] = []
+        skipped: list[str] = []
+        for setting, value in requested.items():
+            combo = self.camera_setting_boxes[setting]
+            camera_value = self._matching_camera_value(combo, value)
+            if not camera_value or not combo.isEnabled():
+                skipped.append(setting.replace("_", " "))
+                continue
+            try:
+                self.active_backend.set_property(setting, camera_value)
+            except CameraError:
+                skipped.append(setting.replace("_", " "))
+                continue
+            combo.setCurrentText(camera_value)
+            applied.append(setting.replace("_", " "))
+        if applied:
+            suffix = f" Skipped: {', '.join(skipped)}." if skipped else ""
+            self._notify(f"Applied {name}: {', '.join(applied)}.{suffix}")
+        else:
+            self._notify(f"{name} is not available on this camera.", error=True)
 
     def start_camera_live_view(self) -> None:
         if self.active_backend is None:
@@ -716,18 +1056,22 @@ class MonitorWindow(QMainWindow):
         else:
             self._set_capture(capture_or_url, "Camera live view")
             self._notify("Camera live view started.")
+        self.set_mode("preview", announce=False)
 
     def pick_lut(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Load LUT", str(Path.home()), "Cube LUT (*.cube)")
         if not filename:
+            self._sync_look_controls()
             return
         lut = load_cube_lut(filename)
         if lut is None:
             self._notify("This LUT file could not be read.", error=True)
             return
         self.current_lut = lut
+        self.current_look = "Custom LUT"
         self.settings.lut_path = filename
-        self.lut_label.setText(Path(filename).name)
+        self.lut_label.setText(f"Custom LUT: {Path(filename).name}")
+        self._sync_look_controls()
         self._notify(f"Loaded LUT: {Path(filename).name}")
 
     def toggle_recording(self) -> None:
@@ -786,6 +1130,7 @@ class MonitorWindow(QMainWindow):
         if self.writer is not None:
             self.writer.write(processed)
         self.video_surface.present(processed)
+        self.preview_surface.present(processed)
         self.frame_count += 1
         self.timecode_label.setText(dt.datetime.now().strftime("%H:%M:%S"))
         if self.frame_count % 3 == 0:
@@ -801,6 +1146,7 @@ class MonitorWindow(QMainWindow):
         cv2.line(idle, (550, 360), (730, 360), (48, 55, 47), 1)
         cv2.putText(idle, "NO VIDEO SIGNAL", (504, 520), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (154, 164, 154), 2, cv2.LINE_AA)
         self.video_surface.present(idle)
+        self.preview_surface.present(idle)
 
     def _notify(self, message: str, error: bool = False) -> None:
         self.status_label.setText(message)

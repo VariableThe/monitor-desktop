@@ -201,6 +201,18 @@ class GPhotoBackend:
         except CameraError:
             return False
 
+    def current_value(self, name: str) -> str | None:
+        """Read the current value reported by the connected camera."""
+        widget_name = self._setting_widgets.get(name)
+        if not widget_name:
+            return None
+        try:
+            with self._lock:
+                value = self._get_widget(widget_name).get_value()
+        except CameraError:
+            return None
+        return str(value)
+
     def _capture_preview(self) -> np.ndarray:
         with self._lock:
             try:

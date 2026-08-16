@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+
+BUILTIN_LOOK_NAMES = ("Neutral", "Warm Film", "Soft Matte", "Teal and Amber", "Monochrome")
 
 
 @dataclass
@@ -85,6 +89,40 @@ def apply_cube_lut(frame: np.ndarray, lut: np.ndarray, amount: float) -> np.ndar
     graded_bgr = cv2.cvtColor(np.clip(graded * 255, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
     amount = float(np.clip(amount, 0, 1))
     return cv2.addWeighted(frame, 1 - amount, graded_bgr, amount, 0)
+
+
+@lru_cache(maxsize=None)
+def built_in_lut(name: str, size: int = 17) -> np.ndarray | None:
+    """Return an original monitoring LUT for a named preview look."""
+    if name == "Neutral":
+        return None
+    if name not in BUILTIN_LOOK_NAMES:
+        raise ValueError(f"Unknown built-in look: {name}")
+
+    values = np.linspace(0, 1, size, dtype=np.float32)
+    red, green, blue = np.meshgrid(values, values, values, indexing="ij")
+    rgb = np.stack((red, green, blue), axis=-1)
+
+    if name == "Warm Film":
+        rgb = np.clip((rgb - 0.5) * 1.05 + 0.5, 0, 1)
+        rgb = np.clip(rgb * np.array((1.06, 1.0, 0.9), dtype=np.float32), 0, 1)
+        rgb = np.power(rgb, np.array((0.98, 1.0, 1.04), dtype=np.float32))
+    elif name == "Soft Matte":
+        rgb = np.clip(0.055 + rgb * 0.89, 0, 1)
+        luma = np.sum(rgb * np.array((0.2126, 0.7152, 0.0722), dtype=np.float32), axis=-1, keepdims=True)
+        rgb = np.clip(luma + (rgb - luma) * 0.84, 0, 1)
+    elif name == "Teal and Amber":
+        luma = np.sum(rgb * np.array((0.2126, 0.7152, 0.0722), dtype=np.float32), axis=-1, keepdims=True)
+        shadows = np.clip((0.48 - luma) * 1.7, 0, 1)
+        highlights = np.clip((luma - 0.52) * 1.7, 0, 1)
+        rgb = rgb + shadows * np.array((-0.04, 0.035, 0.065), dtype=np.float32)
+        rgb = rgb + highlights * np.array((0.07, 0.025, -0.045), dtype=np.float32)
+        rgb = np.clip((rgb - 0.5) * 1.06 + 0.5, 0, 1)
+    elif name == "Monochrome":
+        luma = np.sum(rgb * np.array((0.2126, 0.7152, 0.0722), dtype=np.float32), axis=-1, keepdims=True)
+        rgb = np.repeat(np.power(luma, 0.94), 3, axis=-1)
+
+    return np.clip(rgb, 0, 1).astype(np.float32)
 
 
 def apply_false_color(frame: np.ndarray) -> np.ndarray:

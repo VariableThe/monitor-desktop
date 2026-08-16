@@ -49,6 +49,35 @@ class ScopeViewTests(unittest.TestCase):
         self.assertEqual(window.camera_devices.currentText(), "Sony ZV-E10")
         window.close()
 
+    def test_preview_tools_and_advanced_assists_stay_in_sync(self) -> None:
+        window = MonitorWindow()
+
+        self.assertEqual(window.mode_stack.currentIndex(), 0)
+        self.assertTrue(window.preview_drawer.isHidden())
+        window.preview_tools_button.setChecked(True)
+        self.app.processEvents()
+        self.assertFalse(window.preview_drawer.isHidden())
+
+        window.preview_assist_buttons["peaking"].setChecked(True)
+        self.assertTrue(window.assist_buttons["peaking"].isChecked())
+        self.assertTrue(window.settings.peaking)
+        window.set_mode("advanced", announce=False)
+        self.assertEqual(window.mode_stack.currentIndex(), 1)
+        window.close()
+
+    def test_monitor_preset_applies_look_and_assists(self) -> None:
+        window = MonitorWindow()
+
+        window.apply_monitor_preset("Director's View")
+
+        self.assertTrue(window.settings.zebra)
+        self.assertTrue(window.settings.peaking)
+        self.assertTrue(window.settings.guide)
+        self.assertEqual(window.current_look, "Warm Film")
+        self.assertIsNotNone(window.current_lut)
+        self.assertEqual(window.preview_preset_select.currentText(), "Director's View")
+        window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

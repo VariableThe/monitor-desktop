@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from monitor_desktop.video_tools import MonitorSettings, load_cube_lut, process_frame
+from monitor_desktop.video_tools import BUILTIN_LOOK_NAMES, MonitorSettings, built_in_lut, load_cube_lut, process_frame
 
 
 class VideoToolsTests(unittest.TestCase):
@@ -27,6 +27,16 @@ class VideoToolsTests(unittest.TestCase):
         self.assertIsNotNone(lut)
         assert lut is not None
         self.assertEqual(lut.shape, (2, 2, 2, 3))
+
+    def test_built_in_looks_are_usable_cube_luts(self) -> None:
+        neutral = built_in_lut("Neutral")
+        warm = built_in_lut("Warm Film")
+
+        self.assertIsNone(neutral)
+        self.assertEqual(BUILTIN_LOOK_NAMES[0], "Neutral")
+        assert warm is not None
+        self.assertEqual(warm.shape, (17, 17, 17, 3))
+        self.assertTrue(np.all((warm >= 0) & (warm <= 1)))
 
 
 if __name__ == "__main__":
