@@ -37,7 +37,7 @@ from .backends import (
     CameraDevice,
     CameraError,
     GPhotoBackend,
-    MJPEGProcessCapture,
+    GPhotoLiveCapture,
     SonyRemoteApiBackend,
     SonySdkServerBackend,
 )
@@ -118,7 +118,7 @@ class MonitorWindow(QMainWindow):
         self.setMinimumSize(1180, 680)
 
         self.settings = MonitorSettings(zebra=False, peaking=False, guide=False)
-        self.capture: cv2.VideoCapture | MJPEGProcessCapture | None = None
+        self.capture: cv2.VideoCapture | GPhotoLiveCapture | None = None
         self.capture_is_file = False
         self.latest_frame: np.ndarray | None = None
         self.writer: cv2.VideoWriter | None = None
@@ -502,7 +502,7 @@ class MonitorWindow(QMainWindow):
         self.connection_label.setText("VIDEO CONNECTED")
         self._notify(f"Connected to {source_value}.")
 
-    def _set_capture(self, capture: cv2.VideoCapture | MJPEGProcessCapture, label: str) -> None:
+    def _set_capture(self, capture: cv2.VideoCapture | GPhotoLiveCapture, label: str) -> None:
         self._release_capture()
         self.capture = capture
         self.capture_is_file = False
@@ -594,17 +594,29 @@ class MonitorWindow(QMainWindow):
         self._notify(f"Connected to {device.name}.")
 
     def _load_available_settings(self) -> None:
-        if not isinstance(self.active_backend, SonyRemoteApiBackend):
+        if not isinstance(self.active_backend, (SonyRemoteApiBackend, GPhotoBackend)):
             return
         for name, combo in self.camera_setting_boxes.items():
             values = self.active_backend.available_values(name)
             if not values:
+                if isinstance(self.active_backend, GPhotoBackend):
+                    self._set_camera_setting_enabled(combo, False)
                 continue
             current = combo.currentText()
             combo.clear()
             combo.addItems(dict.fromkeys(values))
             if current in values:
                 combo.setCurrentText(current)
+            if isinstance(self.active_backend, GPhotoBackend):
+                self._set_camera_setting_enabled(combo, self.active_backend.property_writable(name))
+
+    @staticmethod
+    def _set_camera_setting_enabled(combo: QComboBox, enabled: bool) -> None:
+        combo.setEnabled(enabled)
+        parent = combo.parentWidget()
+        if parent is not None:
+            for button in parent.findChildren(QToolButton):
+                button.setEnabled(enabled)
 
     def _set_camera_controls_enabled(self, enabled: bool) -> None:
         self.live_view_button.setEnabled(enabled)
@@ -768,6 +780,8 @@ class MonitorWindow(QMainWindow):
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         self._release_capture()
+        if isinstance(self.active_backend, GPhotoBackend):
+            self.active_backend.disconnect()
         event.accept()
 
 

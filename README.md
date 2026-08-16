@@ -22,7 +22,7 @@ recordings, and still-frame exports stay on the operator's computer.
 | --- | --- | --- | --- |
 | UVC / HDMI capture | Any camera with clean HDMI | Yes | Camera-side only |
 | Sony Wi-Fi Remote API | Older compatible Sony cameras on their Wi-Fi network | Yes | Focus, still, movie, exposure settings when supported by camera |
-| `gphoto2` USB | Linux USB tethering and supported Sony Alpha cameras | Yes | Still capture, focus, settings, and model-dependent movie control |
+| `gphoto2` USB | macOS/Linux USB tethering and supported Sony Alpha cameras | Yes | Still capture, focus, settings, and model-dependent movie control |
 | Camera Remote SDK server | Current Sony models supported by Sony's SDK | Yes | SDK-server capabilities |
 
 The controls are deliberately disabled until a backend has connected. Camera
@@ -56,21 +56,27 @@ selector to enter an RTSP URL or open a video file.
 This is Sony's earlier JSON-RPC remote API. It is useful for compatible older
 models, but it is not Sony's current desktop SDK.
 
-### gphoto2 USB on Linux
+### gphoto2 USB on macOS and Linux
 
-Install [libgphoto2 / gphoto2](https://github.com/gphoto/libgphoto2) using your
-distribution's package manager, put the camera in its PC Remote USB mode, then
-choose `gphoto2 USB` and press `Discover`. Monitor Desktop invokes the existing
-`gphoto2` command-line client rather than reimplementing its USB/PTP driver.
+The bootstrap script installs the [python-gphoto2](https://github.com/jim-easterbrook/python-gphoto2)
+binding on macOS and Linux. It keeps a single `libgphoto2` camera session open,
+which allows preview frames and camera commands to share the USB connection.
+Put the camera in its PC Remote USB mode, then choose `gphoto2 USB`, press
+`Discover`, connect the listed camera, and press `Start camera live view`.
 
-For example, on Debian or Ubuntu:
+If your platform has no compatible Python wheel, install libgphoto2 using the
+system package manager before running the bootstrap script. For example, on
+Debian or Ubuntu:
 
 ```bash
-sudo apt install gphoto2
+sudo apt install libgphoto2-6
 ```
 
-Run `gphoto2 --auto-detect` in a terminal if discovery does not show the camera.
-Not every Sony body exposes live view or movie recording through `gphoto2`.
+Not every Sony body exposes live view or movie recording through libgphoto2.
+
+The original ZV-E10 is supported through this USB path. It is not listed by
+Sony as a current Camera Remote SDK model, so use `gphoto2 USB`, not the SDK
+server option, for that body.
 
 ### Current Sony Camera Remote SDK
 

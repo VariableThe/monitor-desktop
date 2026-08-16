@@ -20,6 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3",
 ]
 dependencies = [
+  "gphoto2>=2.6.0; sys_platform != 'win32'",
   "numpy>=2.0",
   "opencv-python>=4.10",
   "PySide6>=6.8,<7",

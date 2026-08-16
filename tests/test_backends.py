@@ -33,13 +33,10 @@ class SonyRemoteApiBackendTests(unittest.TestCase):
 
 
 class GPhotoBackendTests(unittest.TestCase):
-    def test_builds_port_scoped_command(self) -> None:
-        backend = GPhotoBackend()
-        backend.port = "usb:001,004"
-        self.assertEqual(
-            backend._command(["--summary"]),
-            ["gphoto2", "--port", "usb:001,004", "--summary"],
-        )
+    def test_uses_camera_config_widget_names(self) -> None:
+        self.assertEqual(GPhotoBackend._setting_widgets["iso"], "iso")
+        self.assertEqual(GPhotoBackend._setting_widgets["shutter"], "shutterspeed")
+        self.assertEqual(GPhotoBackend._setting_widgets["white_balance"], "whitebalance")
 
 
 if __name__ == "__main__":

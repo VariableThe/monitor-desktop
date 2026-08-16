@@ -8,10 +8,7 @@ control available through the transport a particular camera actually supports.
 from __future__ import annotations
 
 import json
-import re
-import shutil
 import socket
-import subprocess
 import threading
 import time
 import urllib.error
@@ -23,6 +20,11 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+try:
+    import gphoto2 as gp
+except ImportError:  # pragma: no cover - exercised on systems without the optional binding
+    gp = None
 
 
 class CameraError(RuntimeError):
@@ -37,144 +39,210 @@ class CameraDevice:
     endpoint: str = ""
 
 
-class MJPEGProcessCapture:
-    """Expose gphoto2's JPEG live-view stream with VideoCapture-like methods."""
+class GPhotoLiveCapture:
+    """Read preview frames without releasing the libgphoto2 camera session."""
 
-    def __init__(self, command: list[str]) -> None:
-        self._process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0,
-        )
+    def __init__(self, backend: "GPhotoBackend") -> None:
+        self._backend = backend
         self._lock = threading.Lock()
         self._frame: np.ndarray | None = None
-        self._closed = False
+        self._error: CameraError | None = None
+        self._closed = threading.Event()
         self._thread = threading.Thread(target=self._read_frames, daemon=True)
         self._thread.start()
 
     def _read_frames(self) -> None:
-        assert self._process.stdout is not None
-        buffer = bytearray()
-        while not self._closed:
-            chunk = self._process.stdout.read(8192)
-            if not chunk:
+        while not self._closed.is_set():
+            try:
+                frame = self._backend._capture_preview()
+            except CameraError as exc:
+                self._error = exc
                 return
-            buffer.extend(chunk)
-            while True:
-                start = buffer.find(b"\xff\xd8")
-                end = buffer.find(b"\xff\xd9", start + 2)
-                if start < 0 or end < 0:
-                    if len(buffer) > 4_000_000:
-                        del buffer[:-1024]
-                    break
-                encoded = np.frombuffer(buffer[start : end + 2], dtype=np.uint8)
-                del buffer[: end + 2]
-                frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
-                if frame is not None:
-                    with self._lock:
-                        self._frame = frame
+            with self._lock:
+                self._frame = frame
 
     def read(self) -> tuple[bool, np.ndarray | None]:
         with self._lock:
             return (self._frame is not None, None if self._frame is None else self._frame.copy())
 
     def isOpened(self) -> bool:  # noqa: N802 - match OpenCV's API
-        return not self._closed and self._process.poll() is None
+        return not self._closed.is_set() and self._error is None
 
     def release(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        if self._process.poll() is None:
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
+        self._closed.set()
+        self._thread.join(timeout=1)
 
 
 class GPhotoBackend:
     """USB camera control backed by the existing libgphoto2 project."""
 
     name = "gphoto2 USB"
+    _setting_widgets = {
+        "iso": "iso",
+        "shutter": "shutterspeed",
+        "aperture": "f-number",
+        "white_balance": "whitebalance",
+        "focus_mode": "focusmode",
+    }
+    _value_aliases = {
+        "iso": {"Auto": "Auto ISO"},
+        "white_balance": {
+            "Auto": "Automatic",
+            "Incandescent": "Tungsten",
+            "Fluorescent": "Fluorescent: Daylight",
+        },
+    }
 
     def __init__(self) -> None:
         self.port = ""
+        self.camera: Any | None = None
+        self._lock = threading.RLock()
 
     @staticmethod
     def installed() -> bool:
-        return shutil.which("gphoto2") is not None
+        return gp is not None
 
     def discover(self) -> list[CameraDevice]:
         if not self.installed():
-            raise CameraError("gphoto2 is not installed. Install libgphoto2, then try again.")
-        result = self._run(["--auto-detect"], timeout=12)
+            raise CameraError("The python-gphoto2 binding is not installed. Run the bootstrap script again.")
+        try:
+            detected = gp.Camera.autodetect()
+        except Exception as exc:
+            raise CameraError(f"Could not detect a USB camera: {exc}") from exc
         devices: list[CameraDevice] = []
-        for line in result.stdout.splitlines():
-            if not line.strip() or line.lstrip().startswith(("Model", "-")):
-                continue
-            match = re.match(r"\s*(.*?)\s{2,}(usb:[^\s]+)", line, re.IGNORECASE)
-            if match:
-                name, port = match.groups()
-                devices.append(CameraDevice(port, name.strip(), self.name, port))
+        for index in range(detected.count()):
+            name = detected.get_name(index)
+            port = detected.get_value(index)
+            devices.append(CameraDevice(port, name, self.name, port))
         return devices
 
     def connect(self, device: CameraDevice) -> None:
-        self.port = device.endpoint or device.identifier
-        self._run(["--summary"], timeout=12)
+        if gp is None:
+            raise CameraError("The python-gphoto2 binding is not installed.")
+        self.disconnect()
+        port = device.endpoint or device.identifier
+        try:
+            ports = gp.PortInfoList()
+            ports.load()
+            abilities = gp.CameraAbilitiesList()
+            abilities.load()
+            camera = gp.Camera()
+            camera.set_port_info(ports[ports.lookup_path(port)])
+            camera.set_abilities(abilities[abilities.lookup_model(device.name)])
+            camera.init()
+        except Exception as exc:
+            raise CameraError(f"Could not connect to {device.name}: {exc}") from exc
+        self.port = port
+        self.camera = camera
 
-    def start_live_view(self) -> MJPEGProcessCapture:
+    def disconnect(self) -> None:
+        if self.camera is None:
+            return
+        try:
+            with self._lock:
+                self.camera.exit()
+        except Exception:
+            pass
+        finally:
+            self.camera = None
+            self.port = ""
+
+    def start_live_view(self) -> GPhotoLiveCapture:
         self._require_connection()
-        return MJPEGProcessCapture(self._command(["--capture-movie", "--stdout"]))
+        return GPhotoLiveCapture(self)
 
     def action(self, action: str, recordings_dir: Path | None = None) -> str:
         self._require_connection()
         if action == "focus":
-            self._run(["--set-config", "autofocusdrive=1"])
+            self._set_widget_value("autofocus", 1)
             return "Autofocus requested."
+        if action == "release_focus":
+            # Sony's gphoto2 autofocus is a one-shot action rather than a held shutter state.
+            return "Focus action released."
         if action == "photo":
-            if recordings_dir is None:
-                raise CameraError("A download folder is required for a still capture.")
-            recordings_dir.mkdir(parents=True, exist_ok=True)
-            filename = recordings_dir / f"sony_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
-            self._run(["--capture-image-and-download", "--filename", str(filename)], timeout=45)
-            return f"Saved still: {filename.name}"
+            self._set_widget_value("capture", 1)
+            return "Still capture requested on camera."
         if action == "record_start":
-            self._run(["--set-config", "movie=1"])
+            self._set_widget_value("movie", 1)
             return "Movie recording requested."
         if action == "record_stop":
-            self._run(["--set-config", "movie=0"])
+            self._set_widget_value("movie", 0)
             return "Movie stop requested."
         raise CameraError(f"gphoto2 does not support the action '{action}'.")
 
     def set_property(self, name: str, value: str) -> str:
         self._require_connection()
-        self._run(["--set-config", f"{name}={value}"])
+        widget_name = self._setting_widgets.get(name)
+        if not widget_name:
+            raise CameraError(f"Unsupported gphoto2 setting: {name}")
+        value = self._value_aliases.get(name, {}).get(value, value)
+        self._set_widget_value(widget_name, value)
         return f"Set {name} to {value}."
 
-    def _require_connection(self) -> None:
-        if not self.port:
-            raise CameraError("Choose a gphoto2 camera first.")
-
-    def _command(self, args: list[str]) -> list[str]:
-        return ["gphoto2", "--port", self.port, *args]
-
-    def _run(self, args: list[str], timeout: float = 15) -> subprocess.CompletedProcess[str]:
+    def available_values(self, name: str) -> list[str]:
+        """Read the choices advertised by the connected camera for a setting."""
+        widget_name = self._setting_widgets.get(name)
+        if not widget_name:
+            return []
         try:
-            result = subprocess.run(
-                self._command(args) if self.port else ["gphoto2", *args],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise CameraError("gphoto2 timed out while talking to the camera.") from exc
-        if result.returncode:
-            detail = result.stderr.strip() or result.stdout.strip() or "Unknown gphoto2 error"
-            raise CameraError(detail)
-        return result
+            with self._lock:
+                widget = self._get_widget(widget_name)
+                return [widget.get_choice(index) for index in range(widget.count_choices())]
+        except CameraError:
+            return []
+
+    def property_writable(self, name: str) -> bool:
+        widget_name = self._setting_widgets.get(name)
+        if not widget_name:
+            return False
+        try:
+            with self._lock:
+                return not bool(self._get_widget(widget_name).get_readonly())
+        except CameraError:
+            return False
+
+    def _capture_preview(self) -> np.ndarray:
+        with self._lock:
+            try:
+                preview = self._camera().capture_preview()
+                encoded = np.frombuffer(preview.get_data_and_size(), dtype=np.uint8)
+            except Exception as exc:
+                raise CameraError(f"Could not read camera live view: {exc}") from exc
+        frame = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise CameraError("The camera returned an invalid live-view JPEG.")
+        return frame
+
+    def _set_widget_value(self, name: str, value: int | str) -> None:
+        with self._lock:
+            try:
+                config = self._camera().get_config()
+                widget = config.get_child_by_name(name)
+                if widget is None:
+                    raise CameraError(f"Camera does not expose the '{name}' control.")
+                widget.set_value(value)
+                self._camera().set_config(config)
+            except CameraError:
+                raise
+            except Exception as exc:
+                raise CameraError(f"Could not change camera setting: {exc}") from exc
+
+    def _get_widget(self, name: str) -> Any:
+        try:
+            widget = self._camera().get_config().get_child_by_name(name)
+        except Exception as exc:
+            raise CameraError(f"Could not read camera setting: {exc}") from exc
+        if widget is None:
+            raise CameraError(f"Camera does not expose the '{name}' setting.")
+        return widget
+
+    def _camera(self) -> Any:
+        if self.camera is None:
+            raise CameraError("Choose a gphoto2 camera first.")
+        return self.camera
+
+    def _require_connection(self) -> None:
+        self._camera()
 
 
 class SonyRemoteApiBackend:
