@@ -219,6 +219,21 @@ class ScopeViewTests(unittest.TestCase):
         self.assertEqual(backend.actions, ["zoom_in", "zoom_stop", "zoom_out", "zoom_stop"])
         window.close()
 
+    def test_zoom_buttons_disable_when_backend_reports_no_zoom_support(self) -> None:
+        class FakeBackend:
+            def supports_action(self, action: str) -> bool:
+                return not action.startswith("zoom_")
+
+        window = MonitorWindow()
+        window.active_backend = FakeBackend()  # type: ignore[assignment]
+
+        window._set_camera_controls_enabled(True)
+
+        self.assertFalse(window.zoom_in_button.isEnabled())
+        self.assertFalse(window.preview_zoom_out_button.isEnabled())
+        self.assertIn("not available", window.zoom_in_button.toolTip())
+        window.close()
+
     def test_jetbrains_mono_is_registered_from_the_bundled_font(self) -> None:
         window = MonitorWindow()
 
