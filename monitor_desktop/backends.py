@@ -216,6 +216,16 @@ class GPhotoBackend:
             return None
         return str(value)
 
+    def supports_action(self, action: str) -> bool:
+        if not action.startswith("zoom_"):
+            return True
+        try:
+            with self._lock:
+                widget = self._get_widget("zoom")
+                return not bool(widget.get_readonly())
+        except CameraError:
+            return False
+
     def _capture_preview(self) -> np.ndarray:
         with self._lock:
             try:
@@ -245,14 +255,43 @@ class GPhotoBackend:
     def _drive_zoom(self, action: str) -> None:
         if action == "zoom_stop":
             return
-        direction = "tele" if action == "zoom_in" else "wide"
-        for value in (direction, action.removeprefix("zoom_"), 1 if action == "zoom_in" else -1):
+        with self._lock:
             try:
-                self._set_widget_value("zoom", value)
-                return
+                config = self._camera().get_config()
+                widget = config.get_child_by_name("zoom")
+                if widget is None:
+                    raise CameraError("This gphoto2 camera does not expose a zoom control.")
+                if bool(widget.get_readonly()):
+                    raise CameraError("This gphoto2 camera reports zoom as read-only.")
+                bottom, top, step = self._numeric_range(widget.get_range())
+                current = self._numeric_value(widget.get_value())
+                widget.set_value(self._zoom_target(action, current, bottom, top, step))
+                self._camera().set_config(config)
             except CameraError:
-                continue
-        raise CameraError("This gphoto2 camera does not expose a writable zoom control.")
+                raise
+            except Exception as exc:
+                raise CameraError(f"Could not change camera zoom: {exc}") from exc
+
+    @staticmethod
+    def _numeric_value(value: Any) -> float:
+        try:
+            return float(str(value).replace(",", "."))
+        except ValueError as exc:
+            raise CameraError(f"Camera returned a non-numeric zoom value: {value}") from exc
+
+    @classmethod
+    def _numeric_range(cls, raw_range: Any) -> tuple[float, float, float]:
+        try:
+            bottom, top, step = raw_range[:3]
+        except (TypeError, ValueError) as exc:
+            raise CameraError("Camera did not report a usable zoom range.") from exc
+        return cls._numeric_value(bottom), cls._numeric_value(top), max(cls._numeric_value(step), 1.0)
+
+    @staticmethod
+    def _zoom_target(action: str, current: float, bottom: float, top: float, step: float) -> float:
+        travel = max(step, (top - bottom) * 0.035)
+        direction = 1 if action == "zoom_in" else -1
+        return float(np.clip(current + travel * direction, bottom, top))
 
     def _get_widget(self, name: str) -> Any:
         try:
@@ -301,6 +340,7 @@ class SonyRemoteApiBackend:
     def __init__(self, endpoint: str = "") -> None:
         self.endpoint = self._normalise_endpoint(endpoint)
         self._request_id = 1
+        self.available_api_names: set[str] = set()
 
     @staticmethod
     def _normalise_endpoint(endpoint: str) -> str:
@@ -388,7 +428,9 @@ class SonyRemoteApiBackend:
             self._call("startRecMode", [], version="1.0")
         except CameraError:
             pass
-        return self._call("getAvailableApiList", [])
+        available = self._call("getAvailableApiList", [])
+        self.available_api_names = {str(value) for value in self._flatten(self._result_values(available))}
+        return available
 
     def start_live_view(self) -> str:
         data = self._call("startLiveview", [])
@@ -399,9 +441,13 @@ class SonyRemoteApiBackend:
 
     def action(self, action: str) -> str:
         if action in self._zoom_actions:
+            if not self.supports_action(action):
+                raise CameraError("This Sony Wi-Fi camera does not report remote zoom support.")
             self._call("actZoom", [self._zoom_actions[action], "start"])
             return f"{action.replace('_', ' ').title()} requested."
         if action == "zoom_stop":
+            if not self.supports_action(action):
+                return "Zoom stop ignored."
             self._call("actZoom", ["in", "stop"])
             return "Zoom stop requested."
         method = self._actions.get(action)
@@ -432,6 +478,11 @@ class SonyRemoteApiBackend:
         except CameraError:
             return []
         return [str(value) for value in self._flatten(values) if isinstance(value, (str, int, float))]
+
+    def supports_action(self, action: str) -> bool:
+        if action.startswith("zoom_"):
+            return "actZoom" in self.available_api_names
+        return True
 
     def _call(self, method: str, params: list[Any], version: str = "1.0") -> dict[str, Any]:
         if not self.endpoint:
@@ -524,26 +575,25 @@ class SonySdkServerBackend:
             "photo": "shutter",
             "record_start": "movie-record",
             "record_stop": "movie-record",
-            "zoom_in": "zoom-in",
-            "zoom_out": "zoom-out",
         }
         if action == "zoom_stop":
-            for name in ("zoom-in", "zoom-out"):
-                try:
-                    self._request("POST", f"/api/cameras/{self.camera_id}/actions/{name}", {"action": "stop"})
-                except CameraError:
-                    pass
-            return "Zoom stop requested."
+            return "Zoom stop ignored."
+        if action in {"zoom_in", "zoom_out"}:
+            self._request(
+                "POST",
+                f"/api/cameras/{self.camera_id}/actions/zoom",
+                {"direction": "in" if action == "zoom_in" else "out", "speed": "normal"},
+            )
+            return f"{action.replace('_', ' ').title()} requested."
         name = mapping.get(action)
         if not name:
             raise CameraError(f"Unsupported SDK action: {action}")
-        payload = (
-            {"action": "start" if action == "record_start" else "stop"}
-            if name == "movie-record"
-            else {"action": "start"} if name.startswith("zoom-") else {}
-        )
+        payload = {"action": "start" if action == "record_start" else "stop"} if name == "movie-record" else {}
         self._request("POST", f"/api/cameras/{self.camera_id}/actions/{name}", payload)
         return f"{action.replace('_', ' ').title()} requested."
+
+    def supports_action(self, action: str) -> bool:
+        return True
 
     def set_property(self, name: str, value: str) -> str:
         self._request("PUT", f"/api/cameras/{self.camera_id}/properties/{name}", {"value": value})

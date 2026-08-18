@@ -1222,10 +1222,7 @@ class MonitorWindow(QMainWindow):
         self.focus_button.setEnabled(enabled)
         self.preview_focus_button.setEnabled(enabled)
         self.photo_button.setEnabled(enabled)
-        self.zoom_out_button.setEnabled(enabled)
-        self.zoom_in_button.setEnabled(enabled)
-        self.preview_zoom_out_button.setEnabled(enabled)
-        self.preview_zoom_in_button.setEnabled(enabled)
+        self._set_zoom_controls_enabled(enabled and self._camera_zoom_supported())
         self.camera_record_button.setEnabled(enabled)
         self.preview_record_button.setEnabled(enabled)
         self.camera_preset_select.setEnabled(enabled)
@@ -1234,6 +1231,18 @@ class MonitorWindow(QMainWindow):
         self.delete_camera_preset_button.setEnabled(enabled)
         for control in self.camera_setting_boxes.values():
             control.setEnabled(enabled)
+
+    def _camera_zoom_supported(self) -> bool:
+        if self.active_backend is None:
+            return False
+        supports_action = getattr(self.active_backend, "supports_action", None)
+        return bool(supports_action("zoom_in")) if callable(supports_action) else True
+
+    def _set_zoom_controls_enabled(self, enabled: bool) -> None:
+        tooltip = "Zoom this camera or compatible power-zoom lens." if enabled else "Zoom is not available from this camera or lens."
+        for button in (self.zoom_out_button, self.zoom_in_button, self.preview_zoom_out_button, self.preview_zoom_in_button):
+            button.setEnabled(enabled)
+            button.setToolTip(tooltip)
 
     def run_camera_action(self, action: str, quiet: bool = False) -> bool:
         if self.active_backend is None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from monitor_desktop.backends import GPhotoBackend, SonyRemoteApiBackend
+from monitor_desktop.backends import CameraError, GPhotoBackend, SonyRemoteApiBackend, SonySdkServerBackend
 
 
 class SonyRemoteApiBackendTests(unittest.TestCase):
@@ -33,6 +33,7 @@ class SonyRemoteApiBackendTests(unittest.TestCase):
 
     def test_zoom_actions_use_sony_remote_api_act_zoom(self) -> None:
         backend = SonyRemoteApiBackend("192.168.122.1")
+        backend.available_api_names = {"actZoom"}
         calls: list[tuple[str, list[str]]] = []
         backend._call = lambda method, params: calls.append((method, params)) or {}  # type: ignore[method-assign]
 
@@ -41,12 +42,34 @@ class SonyRemoteApiBackendTests(unittest.TestCase):
 
         self.assertEqual(calls, [("actZoom", ["in", "start"]), ("actZoom", ["in", "stop"])])
 
+    def test_sony_remote_api_rejects_zoom_when_camera_does_not_advertise_it(self) -> None:
+        backend = SonyRemoteApiBackend("192.168.122.1")
+
+        with self.assertRaises(CameraError):
+            backend.action("zoom_in")
+
 
 class GPhotoBackendTests(unittest.TestCase):
     def test_uses_camera_config_widget_names(self) -> None:
         self.assertEqual(GPhotoBackend._setting_widgets["iso"], "iso")
         self.assertEqual(GPhotoBackend._setting_widgets["shutter"], "shutterspeed")
         self.assertEqual(GPhotoBackend._setting_widgets["white_balance"], "whitebalance")
+
+    def test_zoom_target_moves_within_reported_range(self) -> None:
+        self.assertEqual(GPhotoBackend._zoom_target("zoom_in", 50, 0, 100, 1), 53.5)
+        self.assertEqual(GPhotoBackend._zoom_target("zoom_out", 2, 0, 100, 1), 0)
+
+
+class SonySdkServerBackendTests(unittest.TestCase):
+    def test_zoom_uses_documented_zoom_action_endpoint(self) -> None:
+        backend = SonySdkServerBackend("http://127.0.0.1:8080")
+        backend.camera_id = "camera-1"
+        calls: list[tuple[str, str, dict[str, str]]] = []
+        backend._request = lambda method, path, payload=None: calls.append((method, path, payload or {})) or {}  # type: ignore[method-assign]
+
+        backend.action("zoom_out")
+
+        self.assertEqual(calls, [("POST", "/api/cameras/camera-1/actions/zoom", {"direction": "out", "speed": "normal"})])
 
 
 if __name__ == "__main__":

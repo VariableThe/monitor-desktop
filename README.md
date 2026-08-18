@@ -57,7 +57,7 @@ make run
 - **Monitor assists:** Zebra, false color, focus peaking, frame guides, mirror, anamorphic desqueeze, histogram, waveform, and vectorscope.
 - **Looks and LUTs:** Neutral, Warm Film, Soft Matte, Teal and Amber, and Monochrome monitoring looks, plus custom `.cube` LUT preview and strength control.
 - **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups and persistent named custom camera setups for compatible bodies.
-- **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry. Compatible power-zoom lenses can be driven from Preview or Advanced mode.
+- **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry. Remote zoom appears only when the connected transport reports compatible power-zoom support.
 - **Local output:** Monitor-feed recording and PNG frame export are written locally under `recordings/`.
 
 ## Connecting a Sony camera
@@ -92,6 +92,8 @@ sudo apt install libgphoto2-6 gphoto2
 ```
 
 Not every Sony body exposes live view or movie recording through libgphoto2.
+
+Remote zoom over USB is more limited than the live-view path. Some Sony bodies expose zoom to `gphoto2` as a writable absolute range, while others do not expose a usable remote zoom control even with a power-zoom lens attached.
 
 ### Sony Wi-Fi Remote API
 
