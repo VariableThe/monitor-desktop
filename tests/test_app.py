@@ -160,6 +160,10 @@ class ScopeViewTests(unittest.TestCase):
             window.close()
 
     def test_auto_connect_uses_a_single_discovered_usb_camera(self) -> None:
+        class FakeCapture:
+            def release(self) -> None:
+                pass
+
         class FakeGPhotoBackend:
             name = "gphoto2 USB"
 
@@ -173,6 +177,9 @@ class ScopeViewTests(unittest.TestCase):
             def connect(self, device: CameraDevice) -> None:
                 self.connected = device
 
+            def start_live_view(self) -> FakeCapture:
+                return FakeCapture()
+
             def available_values(self, name: str) -> list[str]:
                 return []
 
@@ -185,7 +192,31 @@ class ScopeViewTests(unittest.TestCase):
 
         self.assertEqual(window.camera_devices.currentText(), "Sony ZV-E10")
         self.assertEqual(window.preview_camera_label.text(), "Sony ZV-E10 connected")
-        self.assertIn("Auto-connected", window.status_label.text())
+        self.assertEqual(window.connection_label.text(), "CAMERA LIVE VIEW")
+        self.assertEqual(window.mode_stack.currentIndex(), 0)
+        self.assertIn("Auto-started camera live view", window.status_label.text())
+        window.close()
+
+    def test_zoom_buttons_dispatch_start_and_stop_actions(self) -> None:
+        class FakeBackend:
+            def __init__(self) -> None:
+                self.actions: list[str] = []
+
+            def action(self, action: str) -> str:
+                self.actions.append(action)
+                return f"{action} ok"
+
+        window = MonitorWindow()
+        backend = FakeBackend()
+        window.active_backend = backend  # type: ignore[assignment]
+        window._set_camera_controls_enabled(True)
+
+        window.zoom_in_button.pressed.emit()
+        window.zoom_in_button.released.emit()
+        window.preview_zoom_out_button.pressed.emit()
+        window.preview_zoom_out_button.released.emit()
+
+        self.assertEqual(backend.actions, ["zoom_in", "zoom_stop", "zoom_out", "zoom_stop"])
         window.close()
 
     def test_jetbrains_mono_is_registered_from_the_bundled_font(self) -> None:

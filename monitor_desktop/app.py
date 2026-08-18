@@ -494,6 +494,18 @@ class MonitorWindow(QMainWindow):
         self.preview_focus_button.pressed.connect(lambda: self.run_camera_action("focus"))
         self.preview_focus_button.released.connect(lambda: self.run_camera_action("release_focus", quiet=True))
         layout.addWidget(self.preview_focus_button)
+        self.preview_zoom_out_button = QToolButton()
+        self.preview_zoom_out_button.setIcon(app_icon("magnifying-glass-minus"))
+        self.preview_zoom_out_button.setToolTip("Zoom out")
+        self.preview_zoom_out_button.pressed.connect(lambda: self.run_camera_action("zoom_out"))
+        self.preview_zoom_out_button.released.connect(lambda: self.run_camera_action("zoom_stop", quiet=True))
+        layout.addWidget(self.preview_zoom_out_button)
+        self.preview_zoom_in_button = QToolButton()
+        self.preview_zoom_in_button.setIcon(app_icon("magnifying-glass-plus"))
+        self.preview_zoom_in_button.setToolTip("Zoom in")
+        self.preview_zoom_in_button.pressed.connect(lambda: self.run_camera_action("zoom_in"))
+        self.preview_zoom_in_button.released.connect(lambda: self.run_camera_action("zoom_stop", quiet=True))
+        layout.addWidget(self.preview_zoom_in_button)
         self.preview_record_button = QPushButton("Start camera record")
         self.preview_record_button.setIcon(app_icon("video"))
         self.preview_record_button.clicked.connect(self.toggle_camera_recording)
@@ -864,6 +876,18 @@ class MonitorWindow(QMainWindow):
         self.photo_button.clicked.connect(lambda: self.run_camera_action("photo"))
         action_row.addWidget(self.photo_button)
         layout.addLayout(action_row)
+        zoom_row = QHBoxLayout()
+        self.zoom_out_button = QPushButton("Zoom out")
+        self.zoom_out_button.setIcon(app_icon("magnifying-glass-minus"))
+        self.zoom_out_button.pressed.connect(lambda: self.run_camera_action("zoom_out"))
+        self.zoom_out_button.released.connect(lambda: self.run_camera_action("zoom_stop", quiet=True))
+        zoom_row.addWidget(self.zoom_out_button)
+        self.zoom_in_button = QPushButton("Zoom in")
+        self.zoom_in_button.setIcon(app_icon("magnifying-glass-plus"))
+        self.zoom_in_button.pressed.connect(lambda: self.run_camera_action("zoom_in"))
+        self.zoom_in_button.released.connect(lambda: self.run_camera_action("zoom_stop", quiet=True))
+        zoom_row.addWidget(self.zoom_in_button)
+        layout.addLayout(zoom_row)
         self.camera_record_button = QPushButton("Start camera record")
         self.camera_record_button.setIcon(app_icon("video"))
         self.camera_record_button.clicked.connect(self.toggle_camera_recording)
@@ -1112,6 +1136,7 @@ class MonitorWindow(QMainWindow):
         except CameraError:
             return
         self._complete_camera_connection(backend, device, automatic=True)
+        self.start_camera_live_view(automatic=True)
 
     def _discover_selected_backend(self) -> tuple[GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend, list[CameraDevice]]:
         index = self.backend_select.currentIndex()
@@ -1197,6 +1222,10 @@ class MonitorWindow(QMainWindow):
         self.focus_button.setEnabled(enabled)
         self.preview_focus_button.setEnabled(enabled)
         self.photo_button.setEnabled(enabled)
+        self.zoom_out_button.setEnabled(enabled)
+        self.zoom_in_button.setEnabled(enabled)
+        self.preview_zoom_out_button.setEnabled(enabled)
+        self.preview_zoom_in_button.setEnabled(enabled)
         self.camera_record_button.setEnabled(enabled)
         self.preview_record_button.setEnabled(enabled)
         self.camera_preset_select.setEnabled(enabled)
@@ -1373,7 +1402,7 @@ class MonitorWindow(QMainWindow):
         else:
             self._notify(f"{name} is not available on this camera.", error=True)
 
-    def start_camera_live_view(self) -> None:
+    def start_camera_live_view(self, automatic: bool = False) -> None:
         if self.active_backend is None:
             self._notify("Connect a camera before starting its live view.", error=True)
             return
@@ -1388,7 +1417,7 @@ class MonitorWindow(QMainWindow):
             self.connect_source()
         else:
             self._set_capture(capture_or_url, "Camera live view")
-            self._notify("Camera live view started.")
+            self._notify("Auto-started camera live view." if automatic else "Camera live view started.")
         self.set_mode("preview", announce=False)
 
     def pick_lut(self) -> None:
