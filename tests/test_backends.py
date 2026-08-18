@@ -31,6 +31,16 @@ class SonyRemoteApiBackendTests(unittest.TestCase):
         values = SonyRemoteApiBackend._flatten([["Auto", ["100", "200"]], "400"])
         self.assertEqual(values, ["Auto", "100", "200", "400"])
 
+    def test_zoom_actions_use_sony_remote_api_act_zoom(self) -> None:
+        backend = SonyRemoteApiBackend("192.168.122.1")
+        calls: list[tuple[str, list[str]]] = []
+        backend._call = lambda method, params: calls.append((method, params)) or {}  # type: ignore[method-assign]
+
+        backend.action("zoom_in")
+        backend.action("zoom_stop")
+
+        self.assertEqual(calls, [("actZoom", ["in", "start"]), ("actZoom", ["in", "stop"])])
+
 
 class GPhotoBackendTests(unittest.TestCase):
     def test_uses_camera_config_widget_names(self) -> None:

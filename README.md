@@ -57,7 +57,7 @@ make run
 - **Monitor assists:** Zebra, false color, focus peaking, frame guides, mirror, anamorphic desqueeze, histogram, waveform, and vectorscope.
 - **Looks and LUTs:** Neutral, Warm Film, Soft Matte, Teal and Amber, and Monochrome monitoring looks, plus custom `.cube` LUT preview and strength control.
 - **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups and persistent named custom camera setups for compatible bodies.
-- **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry.
+- **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry. Compatible power-zoom lenses can be driven from Preview or Advanced mode.
 - **Local output:** Monitor-feed recording and PNG frame export are written locally under `recordings/`.
 
 ## Connecting a Sony camera
@@ -73,11 +73,11 @@ Monitor Desktop selects an appropriate transport for the camera and connection s
 
 ### USB on macOS and Linux
 
-With one compatible USB camera connected, Monitor Desktop auto-connects it after launch without changing camera settings or starting live view. With multiple cameras, choose one in **Advanced** mode.
+With one compatible USB camera connected, Monitor Desktop auto-connects it after launch, starts camera live view, and opens Preview mode without changing camera settings. With multiple cameras, choose one in **Advanced** mode.
 
 1. Turn the camera on and enable its PC Remote USB mode.
 2. In **Advanced**, choose `gphoto2 USB` and press **Discover** if it did not auto-connect.
-3. Connect the listed camera, then press **Start camera live view**.
+3. Connect the listed camera, then press **Start camera live view** if it was not started automatically.
 
 The original Sony ZV-E10 works through this path. It is not a current Sony Camera Remote SDK body, so use `gphoto2 USB` for it.
 

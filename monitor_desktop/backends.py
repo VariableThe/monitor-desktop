@@ -153,6 +153,9 @@ class GPhotoBackend:
 
     def action(self, action: str, recordings_dir: Path | None = None) -> str:
         self._require_connection()
+        if action.startswith("zoom_"):
+            self._drive_zoom(action)
+            return f"{action.replace('_', ' ').title()} requested."
         if action == "focus":
             self._set_widget_value("autofocus", 1)
             return "Autofocus requested."
@@ -239,6 +242,18 @@ class GPhotoBackend:
             except Exception as exc:
                 raise CameraError(f"Could not change camera setting: {exc}") from exc
 
+    def _drive_zoom(self, action: str) -> None:
+        if action == "zoom_stop":
+            return
+        direction = "tele" if action == "zoom_in" else "wide"
+        for value in (direction, action.removeprefix("zoom_"), 1 if action == "zoom_in" else -1):
+            try:
+                self._set_widget_value("zoom", value)
+                return
+            except CameraError:
+                continue
+        raise CameraError("This gphoto2 camera does not expose a writable zoom control.")
+
     def _get_widget(self, name: str) -> Any:
         try:
             widget = self._camera().get_config().get_child_by_name(name)
@@ -281,6 +296,7 @@ class SonyRemoteApiBackend:
         "record_start": "startMovieRec",
         "record_stop": "stopMovieRec",
     }
+    _zoom_actions = {"zoom_in": "in", "zoom_out": "out"}
 
     def __init__(self, endpoint: str = "") -> None:
         self.endpoint = self._normalise_endpoint(endpoint)
@@ -382,6 +398,12 @@ class SonyRemoteApiBackend:
         return urls[0]
 
     def action(self, action: str) -> str:
+        if action in self._zoom_actions:
+            self._call("actZoom", [self._zoom_actions[action], "start"])
+            return f"{action.replace('_', ' ').title()} requested."
+        if action == "zoom_stop":
+            self._call("actZoom", ["in", "stop"])
+            return "Zoom stop requested."
         method = self._actions.get(action)
         if not method:
             raise CameraError(f"Unsupported Sony Wi-Fi action: {action}")
@@ -502,11 +524,24 @@ class SonySdkServerBackend:
             "photo": "shutter",
             "record_start": "movie-record",
             "record_stop": "movie-record",
+            "zoom_in": "zoom-in",
+            "zoom_out": "zoom-out",
         }
+        if action == "zoom_stop":
+            for name in ("zoom-in", "zoom-out"):
+                try:
+                    self._request("POST", f"/api/cameras/{self.camera_id}/actions/{name}", {"action": "stop"})
+                except CameraError:
+                    pass
+            return "Zoom stop requested."
         name = mapping.get(action)
         if not name:
             raise CameraError(f"Unsupported SDK action: {action}")
-        payload = {"action": "start" if action == "record_start" else "stop"} if name == "movie-record" else {}
+        payload = (
+            {"action": "start" if action == "record_start" else "stop"}
+            if name == "movie-record"
+            else {"action": "start"} if name.startswith("zoom-") else {}
+        )
         self._request("POST", f"/api/cameras/{self.camera_id}/actions/{name}", payload)
         return f"{action.replace('_', ' ').title()} requested."
 
