@@ -60,6 +60,7 @@ from .video_tools import (
     parse_source,
     process_frame,
 )
+from .virtual_camera import VirtualCameraError, VirtualCameraOutput
 
 
 APP_STYLE = """
@@ -376,11 +377,13 @@ class MonitorWindow(QMainWindow):
         self.capture: cv2.VideoCapture | GPhotoLiveCapture | None = None
         self.capture_is_file = False
         self.latest_frame: np.ndarray | None = None
+        self.latest_source_frame: np.ndarray | None = None
         self.writer: cv2.VideoWriter | None = None
         self.recording_path: Path | None = None
         self.current_lut: np.ndarray | None = None
         self.current_look = "Neutral"
         self.camera_recording = False
+        self.virtual_camera = VirtualCameraOutput()
         self.active_backend: GPhotoBackend | SonyRemoteApiBackend | SonySdkServerBackend | None = None
         self.discovered_devices: list[CameraDevice] = []
         self.preset_path = preset_path or custom_camera_preset_path()
@@ -393,6 +396,7 @@ class MonitorWindow(QMainWindow):
 
         self._build_ui()
         self._sync_monitor_settings()
+        self._set_virtual_camera_controls()
         self._show_idle_frame()
         self.frame_timer = QTimer(self)
         self.frame_timer.setInterval(33)
@@ -619,6 +623,11 @@ class MonitorWindow(QMainWindow):
         self.record_button.setIcon(app_icon("circle"))
         self.record_button.clicked.connect(self.toggle_recording)
         layout.addWidget(self.record_button)
+        self.virtual_camera_button = QPushButton("Start virtual camera")
+        self.virtual_camera_button.setIcon(app_icon("video"))
+        self.virtual_camera_button.setToolTip("Send the connected video source to a system virtual camera")
+        self.virtual_camera_button.clicked.connect(self.toggle_virtual_camera)
+        layout.addWidget(self.virtual_camera_button)
         return bar
 
     def set_mode(self, mode: str, announce: bool = True) -> None:
@@ -692,6 +701,23 @@ class MonitorWindow(QMainWindow):
         disconnect_button.clicked.connect(self.disconnect_source)
         buttons.addWidget(disconnect_button)
         layout.addLayout(buttons)
+        layout.addWidget(QLabel("Virtual camera output"))
+        self.virtual_camera_feed = QComboBox()
+        self.virtual_camera_feed.addItems(["Incoming feed (clean)", "Monitor feed (looks and assists)"])
+        self.virtual_camera_feed.setToolTip("Choose the clean source feed or the monitor's processed image for calls.")
+        layout.addWidget(self.virtual_camera_feed)
+        self.virtual_camera_device = QLineEdit("OBS Virtual Camera")
+        self.virtual_camera_device.setPlaceholderText("Virtual camera device name (optional)")
+        self.virtual_camera_device.setToolTip("Use the name exposed by the installed virtual-camera driver.")
+        layout.addWidget(self.virtual_camera_device)
+        self.virtual_camera_start_button = QPushButton("Start virtual camera")
+        self.virtual_camera_start_button.setIcon(app_icon("video"))
+        self.virtual_camera_start_button.clicked.connect(self.toggle_virtual_camera)
+        layout.addWidget(self.virtual_camera_start_button)
+        self.virtual_camera_status = QLabel("Send any connected source to calls and meetings. Requires an installed virtual-camera driver.")
+        self.virtual_camera_status.setObjectName("muted")
+        self.virtual_camera_status.setWordWrap(True)
+        layout.addWidget(self.virtual_camera_status)
         return group
 
     def _build_camera_connection_group(self) -> QGroupBox:
@@ -1056,10 +1082,12 @@ class MonitorWindow(QMainWindow):
             self._notify("Enter a source before connecting.", error=True)
             return
         source = parse_source(source_value)
+        self.latest_source_frame = None
         self._release_capture()
         capture = cv2.VideoCapture(source)
         if not capture.isOpened():
             capture.release()
+            self.stop_virtual_camera(notify=False)
             self._notify(f"Could not open video source: {source_value}", error=True)
             return
         self.capture = capture
@@ -1078,6 +1106,8 @@ class MonitorWindow(QMainWindow):
 
     def disconnect_source(self) -> None:
         self._release_capture()
+        self.latest_source_frame = None
+        self.stop_virtual_camera(notify=False)
         self.connection_label.setText("NO SOURCE")
         self._show_idle_frame()
         self._notify("Video source disconnected.")
@@ -1090,6 +1120,67 @@ class MonitorWindow(QMainWindow):
             self.writer.release()
             self.writer = None
             self._set_record_button(False)
+
+    def _virtual_camera_frame(
+        self,
+        source_frame: np.ndarray | None = None,
+        monitor_frame: np.ndarray | None = None,
+    ) -> np.ndarray | None:
+        if self.virtual_camera_feed.currentIndex() == 1:
+            return monitor_frame if monitor_frame is not None else self.latest_frame
+        return source_frame if source_frame is not None else self.latest_source_frame
+
+    def toggle_virtual_camera(self) -> None:
+        if self.virtual_camera.active:
+            self.stop_virtual_camera()
+            return
+        frame = self._virtual_camera_frame()
+        if frame is None:
+            self._notify("Connect a video source and wait for a frame before starting the virtual camera.", error=True)
+            return
+        try:
+            device = self.virtual_camera.start(frame, self.virtual_camera_device.text().strip() or None)
+        except VirtualCameraError as exc:
+            self._notify(str(exc), error=True)
+            return
+        self._set_virtual_camera_controls()
+        self._notify(f"Virtual camera started: {device}. Choose it in your call or meeting app.")
+
+    def stop_virtual_camera(self, notify: bool = True) -> None:
+        was_active = self.virtual_camera.active
+        try:
+            self.virtual_camera.stop()
+        except VirtualCameraError as exc:
+            self._notify(str(exc), error=True)
+        self._set_virtual_camera_controls()
+        if was_active and notify:
+            self._notify("Virtual camera stopped.")
+
+    def _set_virtual_camera_controls(self) -> None:
+        active = self.virtual_camera.active
+        for button in (self.virtual_camera_button, self.virtual_camera_start_button):
+            button.setText("Stop virtual camera" if active else "Start virtual camera")
+            button.setIcon(app_icon("stop" if active else "video"))
+            button.setObjectName("recording" if active else "")
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self.virtual_camera_device.setEnabled(not active)
+        if active:
+            self.virtual_camera_status.setText(f"Active: {self.virtual_camera.device}. Select it as the camera in your call or meeting app.")
+        else:
+            self.virtual_camera_status.setText("Send any connected source to calls and meetings. Requires an installed virtual-camera driver.")
+
+    def _publish_virtual_camera(self, source_frame: np.ndarray, monitor_frame: np.ndarray) -> None:
+        if not self.virtual_camera.active:
+            return
+        frame = self._virtual_camera_frame(source_frame, monitor_frame)
+        if frame is None:
+            return
+        try:
+            self.virtual_camera.send(frame)
+        except VirtualCameraError as exc:
+            self.stop_virtual_camera(notify=False)
+            self._notify(f"Virtual camera stopped: {exc}", error=True)
 
     def _populate_camera_devices(self, devices: list[CameraDevice]) -> None:
         self.discovered_devices = devices
@@ -1498,9 +1589,11 @@ class MonitorWindow(QMainWindow):
                 self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
             return
         processed = process_frame(frame, self.settings, self.current_lut)
+        self.latest_source_frame = frame
         self.latest_frame = processed
         if self.writer is not None:
             self.writer.write(processed)
+        self._publish_virtual_camera(frame, processed)
         self.video_surface.present(processed)
         self.preview_surface.present(processed)
         self.frame_count += 1
@@ -1579,6 +1672,7 @@ class MonitorWindow(QMainWindow):
             QTimer.singleShot(400, self.auto_connect_usb_camera)
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        self.stop_virtual_camera(notify=False)
         self._release_capture()
         if isinstance(self.active_backend, GPhotoBackend):
             self.active_backend.disconnect()
