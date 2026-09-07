@@ -69,6 +69,43 @@ class ScopeViewTests(unittest.TestCase):
         self.assertEqual(window.mode_stack.currentIndex(), 1)
         window.close()
 
+    def test_virtual_camera_uses_an_incoming_stream_without_a_camera_connection(self) -> None:
+        class FakeVirtualCamera:
+            def __init__(self) -> None:
+                self.active = False
+                self.device = "Test Virtual Camera"
+                self.sent: list[np.ndarray] = []
+
+            def start(self, frame: np.ndarray, device: str | None) -> str:
+                self.active = True
+                self.sent.append(frame.copy())
+                return self.device
+
+            def send(self, frame: np.ndarray) -> None:
+                self.sent.append(frame.copy())
+
+            def stop(self) -> None:
+                self.active = False
+
+        window = MonitorWindow()
+        virtual_camera = FakeVirtualCamera()
+        window.virtual_camera = virtual_camera  # type: ignore[assignment]
+        incoming = np.full((24, 32, 3), 42, dtype=np.uint8)
+        processed = np.full((24, 32, 3), 99, dtype=np.uint8)
+        window.latest_source_frame = incoming
+
+        window.toggle_virtual_camera()
+        window._publish_virtual_camera(incoming, processed)
+
+        self.assertTrue(virtual_camera.active)
+        self.assertEqual(window.virtual_camera_status.text(), "Active: Test Virtual Camera. Select it as the camera in your call or meeting app.")
+        self.assertTrue(np.array_equal(virtual_camera.sent[-1], incoming))
+
+        window.virtual_camera_feed.setCurrentIndex(1)
+        window._publish_virtual_camera(incoming, processed)
+        self.assertTrue(np.array_equal(virtual_camera.sent[-1], processed))
+        window.close()
+
     def test_monitor_preset_applies_look_and_assists(self) -> None:
         window = MonitorWindow()
 

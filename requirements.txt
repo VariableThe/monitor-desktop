@@ -3,3 +3,4 @@ numpy>=2.0
 opencv-python>=4.10
 PySide6>=6.8,<7
 qtawesome>=1.4,<2
+pyvirtualcam>=0.15,<0.16

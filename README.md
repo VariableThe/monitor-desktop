@@ -59,6 +59,7 @@ make run
 - **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups and persistent named custom camera setups for compatible bodies.
 - **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry. Compatible power-zoom lenses can be driven from Preview or Advanced mode.
 - **Local output:** Monitor-feed recording and PNG frame export are written locally under `recordings/`.
+- **Virtual camera output:** Send any connected source—including RTSP, HTTP, or MJPEG streams—to meeting and calling apps as a system camera.
 
 ## Connecting a Sony camera
 
@@ -100,6 +101,18 @@ Not every Sony body exposes live view or movie recording through libgphoto2.
 3. If discovery is blocked by the network, enter the camera IP address and press **Connect camera**.
 
 This is Sony's earlier JSON-RPC API. For current desktop SDK support, run a compatible local server based on the [Sony Camera Remote SDK](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html), choose `Camera Remote SDK server`, then connect to that server.
+
+## Using a stream in calls and meetings
+
+The virtual camera is source-agnostic: it works with a network stream, capture device, video file, or Sony live view. It does not require the Sony camera-control connection.
+
+1. Connect the incoming feed in **Advanced** using `RTSP or HTTP stream` (or connect any other video source).
+2. Wait for the picture to appear, then choose **Start virtual camera** in the top bar or **Video source** panel.
+3. Select `OBS Virtual Camera` (or the virtual-camera device name you configured) in Zoom, Meet, Teams, or another calling app.
+
+The default output is the clean incoming feed. Select **Monitor feed (looks and assists)** if the call should receive the image with Monitor Desktop's mirror, LUT, guides, and other enabled assists.
+
+Monitor Desktop sends frames to an existing virtual-camera driver; it cannot install an operating-system camera driver itself. On macOS, install OBS Studio 30 or later, start and stop OBS's Virtual Camera once to register it, then quit OBS before starting the output here. On Linux, install and load `v4l2loopback` (or use another compatible virtual camera). If the device has a different name, replace `OBS Virtual Camera` in the app before starting it.
 
 ## Operating notes
 
