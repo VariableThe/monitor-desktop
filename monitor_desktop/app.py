@@ -1923,6 +1923,7 @@ class MonitorWindow(QMainWindow):
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("viewfindrr")
+    app.setDesktopFileName("viewfindrr")
     app.setOrganizationName("viewfindrr")
     window = MonitorWindow()
     window.show()

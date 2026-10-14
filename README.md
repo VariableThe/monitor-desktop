@@ -31,6 +31,8 @@ The installer requires Python 3.11+, `curl`, and `tar`. It never installs global
 ~/.local/bin/viewfindrr
 ```
 
+The installer also adds the app to the application menu as `viewfindrr`; `~/.local/bin/viewfindrr` still works from a terminal.
+
 On Linux the installer also offers the one-time virtual-camera setup with a single y/N question when a terminal is available. `VIEWFINDRR_SETUP_VCAM=1` forces it, `VIEWFINDRR_SETUP_VCAM=0` suppresses it. When piped with no terminal it prints the setup command instead of prompting. The installer itself never uses sudo or installs OS packages.
 
 To make `viewfindrr` available without its full path, add this once to your shell profile:
