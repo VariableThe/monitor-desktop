@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=viewfindrr
+GenericName=Field Monitor
+Comment=Monitor and control a Sony camera, and send the feed to call apps
+Exec=@EXEC@
+Icon=viewfindrr
+Terminal=false
+Categories=AudioVideo;Graphics;Photography;
+Keywords=camera;monitor;sony;viewfinder;stream;virtual;
+StartupNotify=true
+StartupWMClass=viewfindrr
