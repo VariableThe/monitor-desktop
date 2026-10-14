@@ -29,6 +29,8 @@ The installer requires Python 3.11+, `curl`, and `tar`. It never installs global
 ~/.local/bin/monitor-desktop
 ```
 
+On Linux the installer also offers the one-time virtual-camera setup with a single y/N question when a terminal is available. `MONITOR_DESKTOP_SETUP_VCAM=1` forces it, `MONITOR_DESKTOP_SETUP_VCAM=0` suppresses it. When piped with no terminal it prints the setup command instead of prompting. The installer itself never uses sudo or installs OS packages.
+
 To make `monitor-desktop` available without its full path, add this once to your shell profile:
 
 ```bash
@@ -59,7 +61,7 @@ make run
 - **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups and persistent named custom camera setups for compatible bodies.
 - **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry. Remote zoom appears only when the connected transport reports compatible power-zoom support.
 - **Local output:** Monitor-feed recording and PNG frame export are written locally under `recordings/`.
-- **Virtual camera output:** Send any connected source—including RTSP, HTTP, or MJPEG streams—to meeting and calling apps as a system camera.
+- **Virtual camera output:** Send any connected source—including RTSP, HTTP, or MJPEG streams—to meeting and calling apps through a dedicated `Monitor Desktop` device that starts automatically whenever a video source or camera live view becomes active.
 
 ## Connecting a Sony camera
 
@@ -104,17 +106,30 @@ Remote zoom over USB is more limited than the live-view path. Some Sony bodies e
 
 This is Sony's earlier JSON-RPC API. For current desktop SDK support, run a compatible local server based on the [Sony Camera Remote SDK](https://support.d-imaging.sony.co.jp/app/sdk/en/index.html), choose `Camera Remote SDK server`, then connect to that server.
 
+### Virtual camera troubleshooting (Linux)
+
+- Device missing: re-run `sudo sh scripts/setup-v4l2loopback.sh` (installed copy: `sudo ~/.local/share/monitor-desktop/scripts/setup-v4l2loopback.sh`), then reboot so the module loads at boot.
+- Device exists but the call app doesn't list it: restart the call app after first setup. The device uses `exclusive_caps=1`, which is what makes browsers and Electron apps enumerate it.
+- `Virtual camera is busy…`: another app is holding the `Monitor Desktop` device. Close it and restart the output.
+- Permission errors: the setup adds you to the `video` group, which needs a re-login to take effect (logind ACLs may already grant access).
+- `/dev/video10` occupied: re-run with `VIDEO_NR=<n>` and enter the matching `/dev/video<n>` path in the app's device override field.
+- Stop→start can fail with `exclusive_caps=1` (a pyvirtualcam re-open quirk); the app retries on the next source activation.
+
 ## Using a stream in calls and meetings
 
-The virtual camera is source-agnostic: it works with a network stream, capture device, video file, or Sony live view. It does not require the Sony camera-control connection.
+The virtual camera is source-agnostic: it works with RTSP, HTTP, and MJPEG streams, capture devices, video files, and the Sony camera live view. It does not require the Sony camera-control connection.
 
-1. Connect the incoming feed in **Advanced** using `RTSP or HTTP stream` (or connect any other video source).
-2. Wait for the picture to appear, then choose **Start virtual camera** in the top bar or **Video source** panel.
-3. Select `OBS Virtual Camera` (or the virtual-camera device name you configured) in Zoom, Meet, Teams, or another calling app.
+On Linux:
 
-The default output is the clean incoming feed. Select **Monitor feed (looks and assists)** if the call should receive the image with Monitor Desktop's mirror, LUT, guides, and other enabled assists.
+1. Run the one-time setup from a checkout with `sudo sh scripts/setup-v4l2loopback.sh` (from an installed copy: `sudo ~/.local/share/monitor-desktop/scripts/setup-v4l2loopback.sh`). It provisions a dedicated `Monitor Desktop` device at `/dev/video10` and prints `Virtual camera ready: /dev/video10 (Monitor Desktop)` on success.
+2. Connect your source in **Advanced** (the Sony `gphoto2` live view works, as does any other source) and set the virtual-camera mode to `Auto` once in the **Video source** panel. The camera then starts whenever a video source or camera live view becomes active and stops when the source stops. First run defaults to `Off`.
+3. Select `Monitor Desktop` as the camera in Zoom, Meet, Teams, or another calling app.
 
-Monitor Desktop sends frames to an existing virtual-camera driver; it cannot install an operating-system camera driver itself. On macOS, install OBS Studio 30 or later, start and stop OBS's Virtual Camera once to register it, then quit OBS before starting the output here. On Linux, install and load `v4l2loopback` (or use another compatible virtual camera). If the device has a different name, replace `OBS Virtual Camera` in the app before starting it.
+The default output is the clean incoming feed. Select **Monitor feed (looks and assists)** if the call should receive the image with Monitor Desktop's mirror, LUT, guides, and other enabled assists. The feed choice is remembered.
+
+The device field is an optional advanced override: leave it empty to detect the `Monitor Desktop` device automatically, or enter a `/dev/videoN` path to use a different node. On Linux the backend takes a device path, never a label.
+
+The running app performs no privileged operations and cannot install a camera driver itself; on Linux, provisioning is done only by the installer-provided setup script. On macOS, install OBS Studio 30 or later, start and stop OBS's Virtual Camera once to register it, then quit OBS before starting the output here; the device field accepts the registered camera name. On Windows, connect a capture card or webcam source; the app cannot install a camera driver.
 
 ## Operating notes
 

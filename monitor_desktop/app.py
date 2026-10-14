@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,21 @@ from .video_tools import (
     process_frame,
 )
 from .virtual_camera import VirtualCameraError, VirtualCameraOutput
+from .loopback_device import resolve_virtual_camera_device as _resolve_loopback_device
+
+
+VCAM_NOT_PROVISIONED_STATUS = (
+    "Virtual camera driver not found. Run: sudo sh scripts/setup-v4l2loopback.sh "
+    "(installed copy: sudo ~/.local/share/monitor-desktop/scripts/setup-v4l2loopback.sh), "
+    "then reboot or reload the module."
+)
+VCAM_BUSY_MESSAGE = "Virtual camera is busy (another app holds Monitor Desktop). Close it and restart the output."
+VCAM_READY_OFF_STATUS = "Virtual camera ready — select Auto to start it with each source"
+VCAM_INVALID_OVERRIDE_MESSAGE = (
+    "Virtual camera override must be a /dev/videoN path on Linux "
+    "(for example /dev/video10). Leave it empty to detect automatically."
+)
+_VIDEO_NODE_RE = re.compile(r"^/dev/video\d+$")
 
 
 APP_STYLE = """
@@ -165,6 +181,63 @@ def save_custom_camera_presets(path: Path, presets: dict[str, dict[str, str]]) -
     try:
         temporary_path.write_text(
             json.dumps({"version": 1, "presets": _clean_custom_camera_presets(presets)}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    except OSError:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def virtual_camera_prefs_path() -> Path:
+    config_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
+    return Path(config_dir) / "virtual-camera.json"
+
+
+def load_virtual_camera_prefs(path: Path) -> dict:
+    defaults: dict = {"mode": "off", "feed": 0, "device_override": ""}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(defaults)
+    if not isinstance(payload, dict):
+        return dict(defaults)
+    mode = payload.get("mode", "off")
+    if mode not in ("off", "auto"):
+        mode = "off"
+    feed = payload.get("feed", 0)
+    if isinstance(feed, bool) or not isinstance(feed, int) or feed not in (0, 1):
+        feed = 0
+    device_override = payload.get("device_override", "")
+    if not isinstance(device_override, str):
+        device_override = ""
+    else:
+        device_override = device_override.strip()
+    return {"mode": mode, "feed": feed, "device_override": device_override}
+
+
+def save_virtual_camera_prefs(path: Path, prefs: dict) -> None:
+    mode = prefs.get("mode", "off") if isinstance(prefs, dict) else "off"
+    if mode not in ("off", "auto"):
+        mode = "off"
+    feed = prefs.get("feed", 0) if isinstance(prefs, dict) else 0
+    if isinstance(feed, bool) or not isinstance(feed, int) or feed not in (0, 1):
+        feed = 0
+    device_override = prefs.get("device_override", "") if isinstance(prefs, dict) else ""
+    if not isinstance(device_override, str):
+        device_override = ""
+    else:
+        device_override = device_override.strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps(
+                {"version": 1, "mode": mode, "feed": feed, "device_override": device_override},
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
             encoding="utf-8",
         )
         temporary_path.replace(path)
@@ -380,7 +453,7 @@ class SettingsDialog(QDialog):
 
 
 class MonitorWindow(QMainWindow):
-    def __init__(self, preset_path: Path | None = None) -> None:
+    def __init__(self, preset_path: Path | None = None, vcam_prefs_path: Path | None = None) -> None:
         super().__init__()
         load_application_fonts()
         self.setWindowTitle("Monitor Desktop")
@@ -402,6 +475,8 @@ class MonitorWindow(QMainWindow):
         self.discovered_devices: list[CameraDevice] = []
         self.preset_path = preset_path or custom_camera_preset_path()
         self.custom_camera_presets = load_custom_camera_presets(self.preset_path)
+        self.vcam_prefs_path = vcam_prefs_path or virtual_camera_prefs_path()
+        self._vc_auto_armed: bool = False
         self.frame_count = 0
         self._auto_connect_scheduled = False
         self.settings_dialog: SettingsDialog | None = None
@@ -410,12 +485,61 @@ class MonitorWindow(QMainWindow):
 
         self._build_ui()
         self._sync_monitor_settings()
+        self._load_virtual_camera_prefs_into_ui()
+        self._connect_virtual_camera_prefs_signals()
         self._set_virtual_camera_controls()
         self._show_idle_frame()
         self.frame_timer = QTimer(self)
         self.frame_timer.setInterval(33)
         self.frame_timer.timeout.connect(self._tick)
         self.frame_timer.start()
+
+    def _load_virtual_camera_prefs_into_ui(self) -> None:
+        prefs = load_virtual_camera_prefs(self.vcam_prefs_path)
+        for combo, value in (
+            (self.virtual_camera_feed, prefs["feed"]),
+            (self.virtual_camera_mode, 1 if prefs["mode"] == "auto" else 0),
+        ):
+            was_blocked = combo.blockSignals(True)
+            combo.setCurrentIndex(value)
+            combo.blockSignals(was_blocked)
+        was_blocked = self.virtual_camera_device.blockSignals(True)
+        self.virtual_camera_device.setText(prefs["device_override"])
+        self.virtual_camera_device.blockSignals(was_blocked)
+
+    def _connect_virtual_camera_prefs_signals(self) -> None:
+        self.virtual_camera_mode.currentIndexChanged.connect(self._on_virtual_camera_prefs_changed)
+        self.virtual_camera_feed.currentIndexChanged.connect(self._on_virtual_camera_prefs_changed)
+        self.virtual_camera_device.textChanged.connect(self._on_virtual_camera_prefs_changed)
+
+    def _save_virtual_camera_prefs(self) -> None:
+        prefs = {
+            "mode": "auto" if self.virtual_camera_mode.currentIndex() == 1 else "off",
+            "feed": self.virtual_camera_feed.currentIndex(),
+            "device_override": self.virtual_camera_device.text().strip(),
+        }
+        try:
+            save_virtual_camera_prefs(self.vcam_prefs_path, prefs)
+        except OSError as exc:
+            self._notify(f"Could not save virtual-camera settings: {exc}", error=True)
+
+    def _on_virtual_camera_prefs_changed(self) -> None:
+        self._save_virtual_camera_prefs()
+        self._set_virtual_camera_controls()
+
+    def _resolve_virtual_camera_device(self) -> str | None:
+        override = self.virtual_camera_device.text().strip()
+        is_linux = sys.platform.startswith("linux")
+        if override:
+            if is_linux:
+                if not _VIDEO_NODE_RE.match(override):
+                    self._notify(VCAM_INVALID_OVERRIDE_MESSAGE, error=True)
+                    return None
+                return override
+            return override
+        if is_linux:
+            return _resolve_loopback_device(None)
+        return None
 
     def _build_ui(self) -> None:
         self.setStyleSheet(APP_STYLE)
@@ -720,9 +844,13 @@ class MonitorWindow(QMainWindow):
         self.virtual_camera_feed.addItems(["Incoming feed (clean)", "Monitor feed (looks and assists)"])
         self.virtual_camera_feed.setToolTip("Choose the clean source feed or the monitor's processed image for calls.")
         layout.addWidget(self.virtual_camera_feed)
-        self.virtual_camera_device = QLineEdit("OBS Virtual Camera")
-        self.virtual_camera_device.setPlaceholderText("Virtual camera device name (optional)")
-        self.virtual_camera_device.setToolTip("Use the name exposed by the installed virtual-camera driver.")
+        self.virtual_camera_mode = QComboBox()
+        self.virtual_camera_mode.addItems(["Off", "Auto"])
+        self.virtual_camera_mode.setToolTip("Off = never start automatically. Auto = start with each video source.")
+        layout.addWidget(self.virtual_camera_mode)
+        self.virtual_camera_device = QLineEdit("")
+        self.virtual_camera_device.setPlaceholderText("Auto: Monitor Desktop (/dev/video10)")
+        self.virtual_camera_device.setToolTip("Empty = detect automatically. Override with a /dev/videoN path (Linux) or a driver/device name (macOS/Windows).")
         layout.addWidget(self.virtual_camera_device)
         self.virtual_camera_start_button = QPushButton("Start virtual camera")
         self.virtual_camera_start_button.setIcon(app_icon("video"))
@@ -1107,6 +1235,7 @@ class MonitorWindow(QMainWindow):
         self.capture = capture
         self.capture_is_file = self.source_kind.currentIndex() == 2 or Path(source_value).is_file()
         self.connection_label.setText("VIDEO CONNECTED")
+        self._vc_auto_armed = True
         if self.source_kind.currentIndex() == 0 and source == 0:
             self._notify("Connected to capture device 0. For Sony USB control, use gphoto2 USB in the Sony camera panel.")
         else:
@@ -1117,6 +1246,7 @@ class MonitorWindow(QMainWindow):
         self.capture = capture
         self.capture_is_file = False
         self.connection_label.setText(label.upper())
+        self._vc_auto_armed = True
 
     def disconnect_source(self) -> None:
         self._release_capture()
@@ -1147,18 +1277,76 @@ class MonitorWindow(QMainWindow):
     def toggle_virtual_camera(self) -> None:
         if self.virtual_camera.active:
             self.stop_virtual_camera()
+            self._vc_auto_armed = False
             return
         frame = self._virtual_camera_frame()
         if frame is None:
             self._notify("Connect a video source and wait for a frame before starting the virtual camera.", error=True)
             return
-        try:
-            device = self.virtual_camera.start(frame, self.virtual_camera_device.text().strip() or None)
-        except VirtualCameraError as exc:
-            self._notify(str(exc), error=True)
+        override = self.virtual_camera_device.text().strip()
+        device_arg = self._resolve_virtual_camera_device()
+        if device_arg is None and override and sys.platform.startswith("linux"):
+            # Invalid override: _resolve already notified; do not attempt to open.
+            self._vc_auto_armed = False
+            self._set_virtual_camera_controls()
             return
+        try:
+            device = self.virtual_camera.start(frame, device_arg)
+        except VirtualCameraError as exc:
+            self._vc_auto_armed = False
+            if sys.platform.startswith("linux"):
+                if device_arg:
+                    self._set_virtual_camera_controls()
+                    self._notify(VCAM_BUSY_MESSAGE, error=True)
+                elif not override:
+                    self._set_virtual_camera_controls()
+                    self._notify(VCAM_NOT_PROVISIONED_STATUS, error=True)
+                else:
+                    self._set_virtual_camera_controls()
+                    self._notify(str(exc), error=True)
+            else:
+                self._notify(str(exc), error=True)
+            return
+        self._vc_auto_armed = False
         self._set_virtual_camera_controls()
         self._notify(f"Virtual camera started: {device}. Choose it in your call or meeting app.")
+
+    def _maybe_auto_start_virtual_camera(
+        self,
+        source_frame: np.ndarray | None,
+        monitor_frame: np.ndarray | None,
+    ) -> None:
+        if not self._vc_auto_armed:
+            return
+        if self.virtual_camera_mode.currentIndex() != 1:
+            return
+        if self.virtual_camera.active:
+            self._vc_auto_armed = False
+            return
+        frame = self._virtual_camera_frame(source_frame, monitor_frame)
+        if frame is None:
+            return
+        override = self.virtual_camera_device.text().strip()
+        device = self._resolve_virtual_camera_device()
+        if device is None and sys.platform.startswith("linux"):
+            self._vc_auto_armed = False
+            self._set_virtual_camera_controls()
+            if not override:
+                self._notify(VCAM_NOT_PROVISIONED_STATUS, error=True)
+            return
+        try:
+            started = self.virtual_camera.start(frame, device)
+        except VirtualCameraError as exc:
+            self._vc_auto_armed = False
+            if sys.platform.startswith("linux") and device:
+                self._set_virtual_camera_controls()
+                self._notify(VCAM_BUSY_MESSAGE, error=True)
+            else:
+                self._notify(str(exc), error=True)
+            return
+        self._vc_auto_armed = False
+        self._set_virtual_camera_controls()
+        self._notify(f"Virtual camera started: {started}. Choose it in your call or meeting app.")
 
     def stop_virtual_camera(self, notify: bool = True) -> None:
         was_active = self.virtual_camera.active
@@ -1181,8 +1369,24 @@ class MonitorWindow(QMainWindow):
         self.virtual_camera_device.setEnabled(not active)
         if active:
             self.virtual_camera_status.setText(f"Active: {self.virtual_camera.device}. Select it as the camera in your call or meeting app.")
-        else:
+            return
+        if not sys.platform.startswith("linux"):
             self.virtual_camera_status.setText("Send any connected source to calls and meetings. Requires an installed virtual-camera driver.")
+            return
+        override = self.virtual_camera_device.text().strip()
+        if override:
+            if _VIDEO_NODE_RE.match(override):
+                self.virtual_camera_status.setText(f"Override: {override}")
+            else:
+                self.virtual_camera_status.setText(VCAM_NOT_PROVISIONED_STATUS)
+            return
+        resolved = _resolve_loopback_device(None)
+        if resolved is None:
+            self.virtual_camera_status.setText(VCAM_NOT_PROVISIONED_STATUS)
+        elif self.virtual_camera_mode.currentIndex() == 1:
+            self.virtual_camera_status.setText(f"Output: {resolved} (Monitor Desktop)")
+        else:
+            self.virtual_camera_status.setText(VCAM_READY_OFF_STATUS)
 
     def _publish_virtual_camera(self, source_frame: np.ndarray, monitor_frame: np.ndarray) -> None:
         if not self.virtual_camera.active:
@@ -1597,6 +1801,14 @@ class MonitorWindow(QMainWindow):
     def _tick(self) -> None:
         if self.capture is None:
             return
+        if isinstance(self.capture, GPhotoLiveCapture) and not self.capture.isOpened():
+            self.stop_virtual_camera(notify=False)
+            self._release_capture()
+            self.latest_source_frame = None
+            self.connection_label.setText("NO SOURCE")
+            self._show_idle_frame()
+            self._notify("Camera live view ended.")
+            return
         ok, frame = self.capture.read()
         if not ok or frame is None:
             if self.capture_is_file and isinstance(self.capture, cv2.VideoCapture):
@@ -1607,6 +1819,7 @@ class MonitorWindow(QMainWindow):
         self.latest_frame = processed
         if self.writer is not None:
             self.writer.write(processed)
+        self._maybe_auto_start_virtual_camera(frame, processed)
         self._publish_virtual_camera(frame, processed)
         self.video_surface.present(processed)
         self.preview_surface.present(processed)
