@@ -310,6 +310,14 @@ class ScopeViewTests(unittest.TestCase):
         window.settings_dialog.close()
         window.close()
 
+    def test_window_carries_the_product_name_and_bundled_icon(self) -> None:
+        window = MonitorWindow()
+
+        self.assertEqual(window.windowTitle(), "viewfindrr")
+        self.assertFalse(window.windowIcon().isNull())
+        self.assertIn("viewfindrr", window.virtual_camera_device.placeholderText())
+        window.close()
+
 
 class FakeVirtualCameraOutput:
     """Fake virtual-camera backend recording start device and sends."""

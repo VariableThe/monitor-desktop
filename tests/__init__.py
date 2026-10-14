@@ -1,1 +1,1 @@
-"""Unit tests for Monitor Desktop."""
+"""Unit tests for viewfindrr."""

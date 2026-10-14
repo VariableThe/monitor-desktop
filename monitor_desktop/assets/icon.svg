@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- viewfindrr mark: viewfinder corner brackets around an accent-blue centre reticle. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>viewfindrr</title>
+  <rect x="0" y="0" width="256" height="256" rx="52" ry="52" fill="#0b0d12"/>
+  <circle cx="128" cy="128" r="62" fill="none" stroke="#2563eb" stroke-width="4" opacity="0.35"/>
+  <g stroke="#dfe4ec" stroke-width="14" stroke-linecap="butt" fill="none">
+    <path d="M44 96 L44 44 L96 44"/>
+    <path d="M160 44 L212 44 L212 96"/>
+    <path d="M212 160 L212 212 L160 212"/>
+    <path d="M96 212 L44 212 L44 160"/>
+  </g>
+  <g stroke="#2563eb" stroke-width="10" stroke-linecap="butt" fill="none">
+    <path d="M128 106 L128 84"/>
+    <path d="M128 150 L128 172"/>
+    <path d="M106 128 L84 128"/>
+    <path d="M150 128 L172 128"/>
+  </g>
+  <circle cx="128" cy="128" r="7" fill="#2563eb"/>
+</svg>

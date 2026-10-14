@@ -1,4 +1,3 @@
-"""Monitor Desktop package."""
-"""Monitor Desktop camera monitor package."""
+"""viewfindrr package."""
 
 __version__ = "0.2.3"

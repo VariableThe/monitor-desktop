@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "monitor-desktop"
+name = "viewfindrr"
 version = "0.2.3"
 description = "Linux-first desktop monitoring and remote-control app for Sony cameras"
 readme = "README.md"
@@ -29,10 +29,10 @@ dependencies = [
 ]
 
 [project.scripts]
-monitor-desktop = "monitor_desktop.app:main"
+viewfindrr = "monitor_desktop.app:main"
 
 [tool.setuptools]
 packages = ["monitor_desktop"]
 
 [tool.setuptools.package-data]
-monitor_desktop = ["assets/fonts/*.ttf", "assets/fonts/OFL.txt"]
+monitor_desktop = ["assets/fonts/*.ttf", "assets/fonts/OFL.txt", "assets/icon.svg", "assets/icon.png"]

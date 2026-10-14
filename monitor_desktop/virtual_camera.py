@@ -111,7 +111,7 @@ class VirtualCameraOutput:
         try:
             import pyvirtualcam
         except ImportError as exc:
-            raise VirtualCameraError("Virtual camera support is not installed. Run the Monitor Desktop installer again.") from exc
+            raise VirtualCameraError("Virtual camera support is not installed. Run the viewfindrr installer again.") from exc
         return pyvirtualcam.Camera(
             width=width,
             height=height,

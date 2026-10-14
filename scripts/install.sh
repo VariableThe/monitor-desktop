@@ -1,15 +1,15 @@
 #!/usr/bin/env sh
-# Install Monitor Desktop from GitHub into an isolated user-local environment.
+# Install viewfindrr from GitHub into an isolated user-local environment.
 set -eu
 
-repository="https://github.com/VariableThe/monitor-desktop"
-archive_url="${MONITOR_DESKTOP_TARBALL_URL:-$repository/archive/refs/heads/main.tar.gz}"
-install_dir="${MONITOR_DESKTOP_HOME:-$HOME/.local/share/monitor-desktop}"
-bin_dir="${MONITOR_DESKTOP_BIN:-$HOME/.local/bin}"
+repository="https://github.com/VariableThe/viewfindrr"
+archive_url="${VIEWFINDRR_TARBALL_URL:-$repository/archive/refs/heads/main.tar.gz}"
+install_dir="${VIEWFINDRR_HOME:-$HOME/.local/share/viewfindrr}"
+bin_dir="${VIEWFINDRR_BIN:-$HOME/.local/bin}"
 python_bin="${PYTHON_BIN:-python3}"
 
 fail() {
-    printf '%s\n' "Monitor Desktop install failed: $*" >&2
+    printf '%s\n' "viewfindrr install failed: $*" >&2
     exit 1
 }
 
@@ -22,7 +22,7 @@ if [ -e "$install_dir" ]; then
     fail "an installation already exists at $install_dir. Remove it before reinstalling."
 fi
 
-temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/monitor-desktop.XXXXXX")
+temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/viewfindrr.XXXXXX")
 install_created=0
 install_complete=0
 cleanup() {
@@ -33,10 +33,10 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-printf '%s\n' "Downloading Monitor Desktop..."
-curl -fsSL "$archive_url" -o "$temporary_dir/monitor-desktop.tar.gz"
+printf '%s\n' "Downloading viewfindrr..."
+curl -fsSL "$archive_url" -o "$temporary_dir/viewfindrr.tar.gz"
 mkdir -p "$temporary_dir/source"
-tar -xzf "$temporary_dir/monitor-desktop.tar.gz" --strip-components=1 -C "$temporary_dir/source"
+tar -xzf "$temporary_dir/viewfindrr.tar.gz" --strip-components=1 -C "$temporary_dir/source"
 
 printf '%s\n' "Creating an isolated Python environment..."
 mkdir -p "$(dirname "$install_dir")"
@@ -49,14 +49,14 @@ install_created=1
 mkdir -p "$bin_dir"
 printf '%s\n' \
     '#!/usr/bin/env sh' \
-    "exec \"$install_dir/.venv/bin/monitor-desktop\" \"\$@\"" \
-    > "$bin_dir/monitor-desktop"
-chmod +x "$bin_dir/monitor-desktop"
+    "exec \"$install_dir/.venv/bin/viewfindrr\" \"\$@\"" \
+    > "$bin_dir/viewfindrr"
+chmod +x "$bin_dir/viewfindrr"
 
 install_complete=1
-printf '%s\n' "Monitor Desktop is installed."
-printf '%s\n' "Launch it with: $bin_dir/monitor-desktop"
-printf '%s\n' "Add $bin_dir to PATH to launch it as: monitor-desktop"
+printf '%s\n' "viewfindrr is installed."
+printf '%s\n' "Launch it with: $bin_dir/viewfindrr"
+printf '%s\n' "Add $bin_dir to PATH to launch it as: viewfindrr"
 
 maybe_setup_vcam() {
     if [ "$(uname -s)" != "Linux" ]; then
@@ -64,7 +64,7 @@ maybe_setup_vcam() {
     fi
     for vcam_name_file in /sys/class/video4linux/video*/name; do
         [ -f "$vcam_name_file" ] || continue
-        if [ "$(cat "$vcam_name_file" 2>/dev/null || true)" = "Monitor Desktop" ]; then
+        if [ "$(cat "$vcam_name_file" 2>/dev/null || true)" = "viewfindrr" ]; then
             printf '%s\n' "Virtual camera already configured; skipping virtual camera setup."
             return 0
         fi
@@ -74,7 +74,7 @@ maybe_setup_vcam() {
         printf '%s\n' "Virtual camera setup script not found at $vcam_script; skipping." >&2
         return 0
     fi
-    case "${MONITOR_DESKTOP_SETUP_VCAM:-}" in
+    case "${VIEWFINDRR_SETUP_VCAM:-}" in
         0)
             return 0
             ;;
@@ -84,7 +84,7 @@ maybe_setup_vcam() {
             ;;
     esac
     if [ -t 0 ] && [ -r /dev/tty ]; then
-        printf '%s\n' "Optional: expose a 'Monitor Desktop' virtual camera (/dev/video10) via the v4l2loopback kernel module (one-time setup, will ask for your sudo password, safe to re-run)."
+        printf '%s\n' "Optional: expose a 'viewfindrr' virtual camera (/dev/video10) via the v4l2loopback kernel module (one-time setup, will ask for your sudo password, safe to re-run)."
         printf '%s' "Set up the virtual camera now? [y/N] "
         vcam_answer=""
         read -r vcam_answer < /dev/tty || true
@@ -97,7 +97,7 @@ maybe_setup_vcam() {
                 ;;
         esac
     else
-        printf '%s\n' "To enable the 'Monitor Desktop' virtual camera (/dev/video10), run: sudo \"$vcam_script\""
+        printf '%s\n' "To enable the 'viewfindrr' virtual camera (/dev/video10), run: sudo \"$vcam_script\""
     fi
 }
 
