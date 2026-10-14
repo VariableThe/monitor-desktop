@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-OUR_LABEL = "Monitor Desktop"
+OUR_LABEL = "viewfindrr"
 FALLBACK_LABELS = ("Dummy video device", "v4l2 loopback")
 SCANNED_NODE_LIMIT = 100  # mirrors pyvirtualcam's /dev/video[0-99] scan
 

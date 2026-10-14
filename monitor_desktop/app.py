@@ -67,10 +67,10 @@ from .loopback_device import resolve_virtual_camera_device as _resolve_loopback_
 
 VCAM_NOT_PROVISIONED_STATUS = (
     "Virtual camera driver not found. Run: sudo sh scripts/setup-v4l2loopback.sh "
-    "(installed copy: sudo ~/.local/share/monitor-desktop/scripts/setup-v4l2loopback.sh), "
+    "(installed copy: sudo ~/.local/share/viewfindrr/scripts/setup-v4l2loopback.sh), "
     "then reboot or reload the module."
 )
-VCAM_BUSY_MESSAGE = "Virtual camera is busy (another app holds Monitor Desktop). Close it and restart the output."
+VCAM_BUSY_MESSAGE = "Virtual camera is busy (another app holds viewfindrr). Close it and restart the output."
 VCAM_READY_OFF_STATUS = "Virtual camera ready — select Auto to start it with each source"
 VCAM_INVALID_OVERRIDE_MESSAGE = (
     "Virtual camera override must be a /dev/videoN path on Linux "
@@ -137,8 +137,21 @@ CAMERA_PRESETS = {
 
 CAMERA_SETTING_NAMES = ("iso", "shutter", "aperture", "white_balance", "focus_mode")
 CUSTOM_CAMERA_PRESET_PREFIX = "Custom: "
-UPDATE_SCRIPT_URL = "https://raw.githubusercontent.com/VariableThe/monitor-desktop/main/scripts/update.sh"
+UPDATE_SCRIPT_URL = "https://raw.githubusercontent.com/VariableThe/viewfindrr/main/scripts/update.sh"
 UPDATE_COMMAND = f"curl -fsSL {UPDATE_SCRIPT_URL} | sh"
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+WINDOW_ICON_PATHS = (ASSETS_DIR / "icon.png", ASSETS_DIR / "icon.svg")
+
+
+def window_icon() -> QIcon:
+    """Load the bundled window icon, preferring the raster PNG over the SVG."""
+    for path in WINDOW_ICON_PATHS:
+        if not path.is_file():
+            continue
+        icon = QIcon(str(path))
+        if not icon.isNull():
+            return icon
+    return QIcon()
 
 
 def app_icon(name: str) -> QIcon:
@@ -429,7 +442,7 @@ class SettingsDialog(QDialog):
         application = QGroupBox("Application")
         application_layout = QVBoxLayout(application)
         application_layout.setSpacing(8)
-        version = QLabel(f"Monitor Desktop {__version__}")
+        version = QLabel(f"viewfindrr {__version__}")
         version.setObjectName("muted")
         application_layout.addWidget(version)
         self.update_status = QLabel("Ready to update.")
@@ -456,7 +469,8 @@ class MonitorWindow(QMainWindow):
     def __init__(self, preset_path: Path | None = None, vcam_prefs_path: Path | None = None) -> None:
         super().__init__()
         load_application_fonts()
-        self.setWindowTitle("Monitor Desktop")
+        self.setWindowTitle("viewfindrr")
+        self.setWindowIcon(window_icon())
         self.resize(1440, 900)
         self.setMinimumSize(1180, 680)
 
@@ -717,7 +731,7 @@ class MonitorWindow(QMainWindow):
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(14, 8, 14, 8)
         layout.setSpacing(10)
-        brand = QLabel("MONITOR DESKTOP")
+        brand = QLabel("VIEWFINDRR")
         brand.setObjectName("brand")
         brand.setStyleSheet("color: #f4f7f2; font-size: 15px; font-weight: 700; background: transparent;")
         layout.addWidget(brand)
@@ -849,7 +863,7 @@ class MonitorWindow(QMainWindow):
         self.virtual_camera_mode.setToolTip("Off = never start automatically. Auto = start with each video source.")
         layout.addWidget(self.virtual_camera_mode)
         self.virtual_camera_device = QLineEdit("")
-        self.virtual_camera_device.setPlaceholderText("Auto: Monitor Desktop (/dev/video10)")
+        self.virtual_camera_device.setPlaceholderText("Auto: viewfindrr (/dev/video10)")
         self.virtual_camera_device.setToolTip("Empty = detect automatically. Override with a /dev/videoN path (Linux) or a driver/device name (macOS/Windows).")
         layout.addWidget(self.virtual_camera_device)
         self.virtual_camera_start_button = QPushButton("Start virtual camera")
@@ -1384,7 +1398,7 @@ class MonitorWindow(QMainWindow):
         if resolved is None:
             self.virtual_camera_status.setText(VCAM_NOT_PROVISIONED_STATUS)
         elif self.virtual_camera_mode.currentIndex() == 1:
-            self.virtual_camera_status.setText(f"Output: {resolved} (Monitor Desktop)")
+            self.virtual_camera_status.setText(f"Output: {resolved} (viewfindrr)")
         else:
             self.virtual_camera_status.setText(VCAM_READY_OFF_STATUS)
 
@@ -1880,7 +1894,7 @@ class MonitorWindow(QMainWindow):
         if self.settings_dialog is None:
             return
         if exit_code == 0:
-            message = "Update installed. Restart Monitor Desktop to use it."
+            message = "Update installed. Restart viewfindrr to use it."
             self.settings_dialog.set_update_state(message)
             self._notify(message)
         else:
@@ -1908,8 +1922,8 @@ class MonitorWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("Monitor Desktop")
-    app.setOrganizationName("Monitor Desktop")
+    app.setApplicationName("viewfindrr")
+    app.setOrganizationName("viewfindrr")
     window = MonitorWindow()
     window.show()
     return app.exec()

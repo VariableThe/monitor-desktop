@@ -3,7 +3,7 @@
 .PHONY: help setup run test check screenshots
 
 help:
-	@printf '%s\n' "make setup       Create the local virtual environment" "make run         Launch Monitor Desktop" "make test        Run unit tests" "make check       Compile and test" "make screenshots Capture offline README screenshots"
+	@printf '%s\n' "make setup       Create the local virtual environment" "make run         Launch viewfindrr" "make test        Run unit tests" "make check       Compile and test" "make screenshots Capture offline README screenshots"
 
 setup:
 	./scripts/bootstrap.sh

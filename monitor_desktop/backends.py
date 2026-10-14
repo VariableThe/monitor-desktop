@@ -1,4 +1,4 @@
-"""Camera transports used by Monitor Desktop.
+"""Camera transports used by viewfindrr.
 
 The application intentionally keeps camera protocols behind small adapters. This
 allows the monitor to work immediately with a capture card while making Sony

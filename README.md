@@ -1,9 +1,11 @@
-# Monitor Desktop
+# viewfindrr
 
-[![CI](https://github.com/VariableThe/monitor-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/VariableThe/monitor-desktop/actions/workflows/ci.yml)
+<img src="monitor_desktop/assets/icon.svg" width="96" alt="viewfindrr logo">
+
+[![CI](https://github.com/VariableThe/viewfindrr/actions/workflows/ci.yml/badge.svg)](https://github.com/VariableThe/viewfindrr/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Monitor Desktop** is an open-source, local-first field monitor and remote-control surface for Sony cameras. It gives a laptop or desktop the job of a larger production monitor: clean full-screen preview, exposure and focus assists, scopes, monitor looks, recording, and model-dependent Sony control.
+**viewfindrr** is an open-source, local-first field monitor and remote-control surface for Sony cameras. It gives a laptop or desktop the job of a larger production monitor: clean full-screen preview, exposure and focus assists, scopes, monitor looks, recording, and model-dependent Sony control.
 
 It is designed for Linux and macOS. Windows can use capture cards, webcams, local files, and network streams; USB `gphoto2` camera control is currently macOS/Linux only.
 
@@ -20,18 +22,18 @@ The screenshots intentionally show an offline monitor state. No camera footage i
 Paste this single line into a macOS or Linux terminal. It downloads the app into an isolated user-local Python environment, installs its dependencies, and launches it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VariableThe/monitor-desktop/main/scripts/install.sh | sh && "$HOME/.local/bin/monitor-desktop"
+curl -fsSL https://raw.githubusercontent.com/VariableThe/viewfindrr/main/scripts/install.sh | sh && "$HOME/.local/bin/viewfindrr"
 ```
 
 The installer requires Python 3.11+, `curl`, and `tar`. It never installs global Python packages. Later launches use:
 
 ```bash
-~/.local/bin/monitor-desktop
+~/.local/bin/viewfindrr
 ```
 
-On Linux the installer also offers the one-time virtual-camera setup with a single y/N question when a terminal is available. `MONITOR_DESKTOP_SETUP_VCAM=1` forces it, `MONITOR_DESKTOP_SETUP_VCAM=0` suppresses it. When piped with no terminal it prints the setup command instead of prompting. The installer itself never uses sudo or installs OS packages.
+On Linux the installer also offers the one-time virtual-camera setup with a single y/N question when a terminal is available. `VIEWFINDRR_SETUP_VCAM=1` forces it, `VIEWFINDRR_SETUP_VCAM=0` suppresses it. When piped with no terminal it prints the setup command instead of prompting. The installer itself never uses sudo or installs OS packages.
 
-To make `monitor-desktop` available without its full path, add this once to your shell profile:
+To make `viewfindrr` available without its full path, add this once to your shell profile:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -42,7 +44,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Use the gear button in the app's top bar, open **Settings**, then select **Update app**. The update is installed in the existing isolated environment and takes effect after restart. The same update can be run from a terminal:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VariableThe/monitor-desktop/main/scripts/update.sh | sh
+curl -fsSL https://raw.githubusercontent.com/VariableThe/viewfindrr/main/scripts/update.sh | sh
 ```
 
 For a local source checkout instead:
@@ -61,11 +63,11 @@ make run
 - **Presets:** Clean Preview, Focus Check, Exposure Check, Framing, and Director's View monitor setups, plus opt-in camera setups and persistent named custom camera setups for compatible bodies.
 - **Camera controls:** Sliders scrub through exact camera-supported ISO, shutter, aperture, white balance, and focus values; the value field beside each slider supports direct entry. Remote zoom appears only when the connected transport reports compatible power-zoom support.
 - **Local output:** Monitor-feed recording and PNG frame export are written locally under `recordings/`.
-- **Virtual camera output:** Send any connected source—including RTSP, HTTP, or MJPEG streams—to meeting and calling apps through a dedicated `Monitor Desktop` device that starts automatically whenever a video source or camera live view becomes active.
+- **Virtual camera output:** Send any connected source—including RTSP, HTTP, or MJPEG streams—to meeting and calling apps through a dedicated `viewfindrr` device that starts automatically whenever a video source or camera live view becomes active.
 
 ## Connecting a Sony camera
 
-Monitor Desktop selects an appropriate transport for the camera and connection style. Camera support is model and firmware dependent; controls remain disabled until a transport has actually connected.
+viewfindrr selects an appropriate transport for the camera and connection style. Camera support is model and firmware dependent; controls remain disabled until a transport has actually connected.
 
 | Transport | Best for | Live view | Controls |
 | --- | --- | --- | --- |
@@ -76,7 +78,7 @@ Monitor Desktop selects an appropriate transport for the camera and connection s
 
 ### USB on macOS and Linux
 
-With one compatible USB camera connected, Monitor Desktop auto-connects it after launch, starts camera live view, and opens Preview mode without changing camera settings. With multiple cameras, choose one in **Advanced** mode.
+With one compatible USB camera connected, viewfindrr auto-connects it after launch, starts camera live view, and opens Preview mode without changing camera settings. With multiple cameras, choose one in **Advanced** mode.
 
 1. Turn the camera on and enable its PC Remote USB mode.
 2. In **Advanced**, choose `gphoto2 USB` and press **Discover** if it did not auto-connect.
@@ -108,9 +110,9 @@ This is Sony's earlier JSON-RPC API. For current desktop SDK support, run a comp
 
 ### Virtual camera troubleshooting (Linux)
 
-- Device missing: re-run `sudo sh scripts/setup-v4l2loopback.sh` (installed copy: `sudo ~/.local/share/monitor-desktop/scripts/setup-v4l2loopback.sh`), then reboot so the module loads at boot.
+- Device missing: re-run `sudo sh scripts/setup-v4l2loopback.sh` (installed copy: `sudo ~/.local/share/viewfindrr/scripts/setup-v4l2loopback.sh`), then reboot so the module loads at boot.
 - Device exists but the call app doesn't list it: restart the call app after first setup. The device uses `exclusive_caps=1`, which is what makes browsers and Electron apps enumerate it.
-- `Virtual camera is busy…`: another app is holding the `Monitor Desktop` device. Close it and restart the output.
+- `Virtual camera is busy…`: another app is holding the `viewfindrr` device. Close it and restart the output.
 - Permission errors: the setup adds you to the `video` group, which needs a re-login to take effect (logind ACLs may already grant access).
 - `/dev/video10` occupied: re-run with `VIDEO_NR=<n>` and enter the matching `/dev/video<n>` path in the app's device override field.
 - Stop→start can fail with `exclusive_caps=1` (a pyvirtualcam re-open quirk); the app retries on the next source activation.
@@ -121,13 +123,13 @@ The virtual camera is source-agnostic: it works with RTSP, HTTP, and MJPEG strea
 
 On Linux:
 
-1. Run the one-time setup from a checkout with `sudo sh scripts/setup-v4l2loopback.sh` (from an installed copy: `sudo ~/.local/share/monitor-desktop/scripts/setup-v4l2loopback.sh`). It provisions a dedicated `Monitor Desktop` device at `/dev/video10` and prints `Virtual camera ready: /dev/video10 (Monitor Desktop)` on success.
+1. Run the one-time setup from a checkout with `sudo sh scripts/setup-v4l2loopback.sh` (from an installed copy: `sudo ~/.local/share/viewfindrr/scripts/setup-v4l2loopback.sh`). It provisions a dedicated `viewfindrr` device at `/dev/video10` and prints `Virtual camera ready: /dev/video10 (viewfindrr)` on success.
 2. Connect your source in **Advanced** (the Sony `gphoto2` live view works, as does any other source) and set the virtual-camera mode to `Auto` once in the **Video source** panel. The camera then starts whenever a video source or camera live view becomes active and stops when the source stops. First run defaults to `Off`.
-3. Select `Monitor Desktop` as the camera in Zoom, Meet, Teams, or another calling app.
+3. Select `viewfindrr` as the camera in Zoom, Meet, Teams, or another calling app.
 
-The default output is the clean incoming feed. Select **Monitor feed (looks and assists)** if the call should receive the image with Monitor Desktop's mirror, LUT, guides, and other enabled assists. The feed choice is remembered.
+The default output is the clean incoming feed. Select **Monitor feed (looks and assists)** if the call should receive the image with viewfindrr's mirror, LUT, guides, and other enabled assists. The feed choice is remembered.
 
-The device field is an optional advanced override: leave it empty to detect the `Monitor Desktop` device automatically, or enter a `/dev/videoN` path to use a different node. On Linux the backend takes a device path, never a label.
+The device field is an optional advanced override: leave it empty to detect the `viewfindrr` device automatically, or enter a `/dev/videoN` path to use a different node. On Linux the backend takes a device path, never a label.
 
 The running app performs no privileged operations and cannot install a camera driver itself; on Linux, provisioning is done only by the installer-provided setup script. On macOS, install OBS Studio 30 or later, start and stop OBS's Virtual Camera once to register it, then quit OBS before starting the output here; the device field accepts the registered camera name. On Windows, connect a capture card or webcam source; the app cannot install a camera driver.
 
@@ -148,12 +150,12 @@ make screenshots
 
 `make check` compiles the application and runs the unit tests. GitHub Actions runs the same checks on Python 3.11 and 3.12. The screenshot command always forces an offline state, avoiding a connected camera and any live camera image.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations and [the issue tracker](https://github.com/VariableThe/monitor-desktop/issues) for bugs and feature requests.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations and [the issue tracker](https://github.com/VariableThe/viewfindrr/issues) for bugs and feature requests.
 
 ## Project status
 
-Monitor Desktop is an early, usable foundation rather than feature parity with every Monitor+ release or Sony body. High-value next steps are click-to-focus coordinate mapping, media transfer, audio capture, broader hardware verification, and native installers.
+viewfindrr is an early, usable foundation rather than feature parity with every Monitor+ release or Sony body. High-value next steps are click-to-focus coordinate mapping, media transfer, audio capture, broader hardware verification, and native installers.
 
 ## License
 
-Monitor Desktop is released under the [MIT License](LICENSE). `gphoto2`, OpenCV, PySide6, QtAwesome, and Sony Camera Remote SDK components remain separate projects under their own licenses. JetBrains Mono Regular and Bold are bundled under the [SIL Open Font License 1.1](monitor_desktop/assets/fonts/OFL.txt); QtAwesome bundles Font Awesome under its respective font license.
+viewfindrr is released under the [MIT License](LICENSE). `gphoto2`, OpenCV, PySide6, QtAwesome, and Sony Camera Remote SDK components remain separate projects under their own licenses. JetBrains Mono Regular and Bold are bundled under the [SIL Open Font License 1.1](monitor_desktop/assets/fonts/OFL.txt); QtAwesome bundles Font Awesome under its respective font license.

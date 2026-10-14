@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
-# One-time privileged setup for the Monitor Desktop virtual camera.
+# One-time privileged setup for the viewfindrr virtual camera.
 #
-# Creates a persistent v4l2loopback device labelled "Monitor Desktop" at
+# Creates a persistent v4l2loopback device labelled "viewfindrr" at
 # /dev/video10 and keeps it across reboots. Run once, explicitly:
 #
 #   sudo sh scripts/setup-v4l2loopback.sh [--dry-run] [--force]
@@ -12,40 +12,40 @@
 # After this runs once, the app itself needs zero privileges.
 # This script is the only place that uses sudo, and never installs silently.
 #
-# Overrides: CARD_LABEL (default "Monitor Desktop"), VIDEO_NR (default 10),
+# Overrides: CARD_LABEL (default "viewfindrr"), VIDEO_NR (default 10),
 # DRY_RUN=1, FORCE=1, MODPROBE_DIR, MODULES_LOAD_DIR, SYS_CLASS_DIR, DEV_DIR
 # (the last four default to the live system paths; point them at temp dirs
 # to exercise the dry-run/clobber logic without touching the system).
 set -eu
 
-card_label="${CARD_LABEL:-Monitor Desktop}"
+card_label="${CARD_LABEL:-viewfindrr}"
 video_nr="${VIDEO_NR:-10}"
 modprobe_dir="${MODPROBE_DIR:-/etc/modprobe.d}"
 modules_load_dir="${MODULES_LOAD_DIR:-/etc/modules-load.d}"
 sys_class_dir="${SYS_CLASS_DIR:-/sys/class/video4linux}"
 dev_dir="${DEV_DIR:-/dev}"
-conf_name="60-monitor-desktop-v4l2loopback.conf"
+conf_name="60-viewfindrr-v4l2loopback.conf"
 
 dry_run="${DRY_RUN:-0}"
 force="${FORCE:-0}"
 
 fail() {
-    printf '%s\n' "Monitor Desktop virtual camera setup failed: $*" >&2
+    printf '%s\n' "viewfindrr virtual camera setup failed: $*" >&2
     exit 1
 }
 
 warn() {
-    printf '%s\n' "Monitor Desktop virtual camera setup warning: $*" >&2
+    printf '%s\n' "viewfindrr virtual camera setup warning: $*" >&2
 }
 
 say() {
-    printf '%s\n' "Monitor Desktop virtual camera setup: $*"
+    printf '%s\n' "viewfindrr virtual camera setup: $*"
 }
 
 usage() {
     printf '%s\n' "usage: setup-v4l2loopback.sh [--dry-run] [--force]"
     printf '%s\n' "  --dry-run  print every action, including privileged commands; change nothing"
-    printf '%s\n' "  --force    back up conflicting config to <file>.bak.<timestamp> and replace it"
+    printf '%s\n' "  --force    back up each conflicting file to <file>.bak.<timestamp> and remove it"
     printf '%s\n' "env: CARD_LABEL VIDEO_NR DRY_RUN=1 FORCE=1 MODPROBE_DIR MODULES_LOAD_DIR"
 }
 
@@ -86,7 +86,7 @@ fi
 
 os_name=$(uname -s)
 if [ "$os_name" != "Linux" ]; then
-    printf '%s\n' "Monitor Desktop virtual camera setup is Linux-only (v4l2loopback); on $os_name (macOS/Windows) nothing needs to be done." >&2
+    printf '%s\n' "viewfindrr virtual camera setup is Linux-only (v4l2loopback); on $os_name (macOS/Windows) nothing needs to be done." >&2
     exit 1
 fi
 
@@ -168,20 +168,20 @@ if [ -f "$modules_load_file" ] && [ "$(cat "$modules_load_file")" != "$expected_
 fi
 if [ -n "$conflicts" ]; then
     if [ "$force" -eq 0 ]; then
-        printf '%s\n' "existing v4l2loopback configuration conflicts with the Monitor Desktop setup:" >&2
+        printf '%s\n' "existing v4l2loopback configuration conflicts with the viewfindrr setup:" >&2
         # shellcheck disable=SC2086
         for conflict in $conflicts; do
             printf '%s\n' "  conflicting file: $conflict" >&2
         done
-        printf '%s\n' "re-run with --force to back up each file to <file>.bak.<timestamp> and replace it." >&2
+        printf '%s\n' "re-run with --force to back up each file to <file>.bak.<timestamp> and remove it." >&2
         exit 1
     fi
     command -v date >/dev/null 2>&1 || fail "date is required to timestamp backups."
     stamp=$(date +%Y%m%d%H%M%S)
     # shellcheck disable=SC2086
     for conflict in $conflicts; do
-        say "backing up $conflict to $conflict.bak.$stamp"
-        priv "sudo cp -a $(sq "$conflict") $(sq "$conflict.bak.$stamp")"
+        say "backing up $conflict to $conflict.bak.$stamp and removing it"
+        priv "sudo mv $(sq "$conflict") $(sq "$conflict.bak.$stamp")"
     done
 fi
 
