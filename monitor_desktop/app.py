@@ -174,19 +174,33 @@ def save_custom_camera_presets(path: Path, presets: dict[str, dict[str, str]]) -
 
 
 _application_fonts_loaded = False
+_application_font_families: list[str] = []
 
 
-def load_application_fonts() -> None:
-    """Register bundled JetBrains Mono so the interface is consistent cross-platform."""
-    global _application_fonts_loaded
+def load_application_fonts() -> list[str]:
+    """Register bundled JetBrains Mono so the interface is consistent cross-platform.
+
+    Returns the font families actually registered from the bundled files.
+    Qt may list a registered family under a foundry-qualified name in
+    QFontDatabase.families() when the host OS already ships the same family,
+    so callers must use this return value instead of assuming the name.
+    """
+    global _application_fonts_loaded, _application_font_families
     if _application_fonts_loaded:
-        return
+        return list(_application_font_families)
     fonts = Path(__file__).resolve().parent / "assets" / "fonts"
     for filename in ("JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf"):
-        QFontDatabase.addApplicationFont(str(fonts / filename))
-    if app := QApplication.instance():
-        app.setFont(QFont("JetBrains Mono", 12))
+        font_id = QFontDatabase.addApplicationFont(str(fonts / filename))
+        if font_id == -1:
+            continue
+        for family in QFontDatabase.applicationFontFamilies(font_id):
+            if family not in _application_font_families:
+                _application_font_families.append(family)
+    if _application_font_families:
+        if app := QApplication.instance():
+            app.setFont(QFont(_application_font_families[0], 12))
     _application_fonts_loaded = True
+    return list(_application_font_families)
 
 
 class VideoSurface(QLabel):

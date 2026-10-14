@@ -10,10 +10,9 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
-from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView, app_icon, load_custom_camera_presets, save_custom_camera_presets
+from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView, app_icon, load_application_fonts, load_custom_camera_presets, save_custom_camera_presets
 from monitor_desktop.backends import CameraDevice
 
 
@@ -274,7 +273,12 @@ class ScopeViewTests(unittest.TestCase):
     def test_jetbrains_mono_is_registered_from_the_bundled_font(self) -> None:
         window = MonitorWindow()
 
-        self.assertIn("JetBrains Mono", QFontDatabase.families())
+        # Assert on the families the loader actually registered, not on
+        # QFontDatabase.families(): when the host OS already ships JetBrains
+        # Mono, Qt qualifies the duplicate with the foundry (e.g.
+        # "JetBrains Mono [JB  ]") and drops the plain name from families(),
+        # even though registration succeeded and the font resolves.
+        self.assertIn("JetBrains Mono", load_application_fonts())
         self.assertEqual(window.font().family(), "JetBrains Mono")
         window.close()
 
