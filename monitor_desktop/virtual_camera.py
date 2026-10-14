@@ -4,6 +4,9 @@
 already installed on the computer. Keeping that boundary here makes the UI
 work with OBS Virtual Camera on macOS and Windows, and v4l2loopback on Linux,
 without making source capture depend on a particular camera transport.
+
+On Linux ``device`` is a ``/dev/videoN`` path or ``None`` (auto-scan);
+card-label → path resolution lives in ``monitor_desktop.loopback_device``.
 """
 
 from __future__ import annotations

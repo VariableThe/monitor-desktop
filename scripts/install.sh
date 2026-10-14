@@ -57,3 +57,48 @@ install_complete=1
 printf '%s\n' "Monitor Desktop is installed."
 printf '%s\n' "Launch it with: $bin_dir/monitor-desktop"
 printf '%s\n' "Add $bin_dir to PATH to launch it as: monitor-desktop"
+
+maybe_setup_vcam() {
+    if [ "$(uname -s)" != "Linux" ]; then
+        return 0
+    fi
+    for vcam_name_file in /sys/class/video4linux/video*/name; do
+        [ -f "$vcam_name_file" ] || continue
+        if [ "$(cat "$vcam_name_file" 2>/dev/null || true)" = "Monitor Desktop" ]; then
+            printf '%s\n' "Virtual camera already configured; skipping virtual camera setup."
+            return 0
+        fi
+    done
+    vcam_script="$install_dir/scripts/setup-v4l2loopback.sh"
+    if [ ! -f "$vcam_script" ]; then
+        printf '%s\n' "Virtual camera setup script not found at $vcam_script; skipping." >&2
+        return 0
+    fi
+    case "${MONITOR_DESKTOP_SETUP_VCAM:-}" in
+        0)
+            return 0
+            ;;
+        1)
+            sh "$vcam_script" || printf '%s\n' "Virtual camera setup did not complete; run later with: sudo \"$vcam_script\"" >&2
+            return 0
+            ;;
+    esac
+    if [ -t 0 ] && [ -r /dev/tty ]; then
+        printf '%s\n' "Optional: expose a 'Monitor Desktop' virtual camera (/dev/video10) via the v4l2loopback kernel module (one-time setup, will ask for your sudo password, safe to re-run)."
+        printf '%s' "Set up the virtual camera now? [y/N] "
+        vcam_answer=""
+        read -r vcam_answer < /dev/tty || true
+        case "$vcam_answer" in
+            [yY]|[yY][eE][sS])
+                sh "$vcam_script" || printf '%s\n' "Virtual camera setup did not complete; run later with: sudo \"$vcam_script\"" >&2
+                ;;
+            *)
+                printf '%s\n' "Skipping virtual camera setup. To enable it later, run: sudo \"$vcam_script\""
+                ;;
+        esac
+    else
+        printf '%s\n' "To enable the 'Monitor Desktop' virtual camera (/dev/video10), run: sudo \"$vcam_script\""
+    fi
+}
+
+maybe_setup_vcam
