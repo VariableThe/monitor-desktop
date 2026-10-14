@@ -54,6 +54,20 @@ class VirtualCameraOutputTests(unittest.TestCase):
 
         self.assertFalse(output.active)
 
+    def test_start_with_none_device_forwards_none_to_factory(self) -> None:
+        created: dict[str, object] = {}
+        camera = FakeCamera()
+
+        def factory(**kwargs: object) -> FakeCamera:
+            created.update(kwargs)
+            return camera
+
+        output = VirtualCameraOutput(factory, fps=30)
+        output.start(np.zeros((180, 320, 3), dtype=np.uint8), None)
+
+        self.assertEqual(created.get("device"), None)
+        self.assertTrue(output.active)
+
 
 if __name__ == "__main__":
     unittest.main()

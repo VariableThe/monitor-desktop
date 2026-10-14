@@ -13,8 +13,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import QApplication
 
-from monitor_desktop.app import CameraSettingControl, MonitorWindow, ScopeView, app_icon, load_custom_camera_presets, save_custom_camera_presets
-from monitor_desktop.backends import CameraDevice
+from monitor_desktop.app import (
+    CameraSettingControl,
+    MonitorWindow,
+    ScopeView,
+    app_icon,
+    load_custom_camera_presets,
+    load_virtual_camera_prefs,
+    save_custom_camera_presets,
+    save_virtual_camera_prefs,
+)
+from monitor_desktop.backends import CameraDevice, GPhotoLiveCapture
+from monitor_desktop.virtual_camera import VirtualCameraError, VirtualCameraOutput
 
 
 class ScopeViewTests(unittest.TestCase):
@@ -87,24 +97,28 @@ class ScopeViewTests(unittest.TestCase):
             def stop(self) -> None:
                 self.active = False
 
-        window = MonitorWindow()
-        virtual_camera = FakeVirtualCamera()
-        window.virtual_camera = virtual_camera  # type: ignore[assignment]
-        incoming = np.full((24, 32, 3), 42, dtype=np.uint8)
-        processed = np.full((24, 32, 3), 99, dtype=np.uint8)
-        window.latest_source_frame = incoming
+        # NOTE (feat/auto-virtual-camera): isolated prefs paths so the new
+        # virtual-camera persistence cannot leak widget state between runs.
+        # The Active-status assertion below is unchanged.
+        with tempfile.TemporaryDirectory() as directory:
+            window = MonitorWindow(Path(directory) / "camera-presets.json", Path(directory) / "virtual-camera.json")
+            virtual_camera = FakeVirtualCamera()
+            window.virtual_camera = virtual_camera  # type: ignore[assignment]
+            incoming = np.full((24, 32, 3), 42, dtype=np.uint8)
+            processed = np.full((24, 32, 3), 99, dtype=np.uint8)
+            window.latest_source_frame = incoming
 
-        window.toggle_virtual_camera()
-        window._publish_virtual_camera(incoming, processed)
+            window.toggle_virtual_camera()
+            window._publish_virtual_camera(incoming, processed)
 
-        self.assertTrue(virtual_camera.active)
-        self.assertEqual(window.virtual_camera_status.text(), "Active: Test Virtual Camera. Select it as the camera in your call or meeting app.")
-        self.assertTrue(np.array_equal(virtual_camera.sent[-1], incoming))
+            self.assertTrue(virtual_camera.active)
+            self.assertEqual(window.virtual_camera_status.text(), "Active: Test Virtual Camera. Select it as the camera in your call or meeting app.")
+            self.assertTrue(np.array_equal(virtual_camera.sent[-1], incoming))
 
-        window.virtual_camera_feed.setCurrentIndex(1)
-        window._publish_virtual_camera(incoming, processed)
-        self.assertTrue(np.array_equal(virtual_camera.sent[-1], processed))
-        window.close()
+            window.virtual_camera_feed.setCurrentIndex(1)
+            window._publish_virtual_camera(incoming, processed)
+            self.assertTrue(np.array_equal(virtual_camera.sent[-1], processed))
+            window.close()
 
     def test_monitor_preset_applies_look_and_assists(self) -> None:
         window = MonitorWindow()
@@ -290,6 +304,243 @@ class ScopeViewTests(unittest.TestCase):
         self.assertFalse(window.settings_button.icon().isNull())
         window.settings_dialog.close()
         window.close()
+
+
+class FakeVirtualCameraOutput:
+    """Fake virtual-camera backend recording start device and sends."""
+
+    def __init__(self, device: str = "Test Virtual Camera") -> None:
+        self.active = False
+        self.device = device
+        self.start_calls = 0
+        self.start_device: str | None = None
+        self.sent: list[np.ndarray] = []
+
+    def start(self, frame: np.ndarray, device: str | None) -> str:
+        self.start_calls += 1
+        self.start_device = device
+        self.active = True
+        self.sent.append(frame.copy())
+        return self.device
+
+    def send(self, frame: np.ndarray) -> None:
+        self.sent.append(frame.copy())
+
+    def stop(self) -> None:
+        self.active = False
+
+
+class FakeCapture:
+    """Minimal capture stub delivering one fixed frame per read."""
+
+    def __init__(self, frame: np.ndarray) -> None:
+        self._frame = frame
+        self.released = False
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        return True, self._frame.copy()
+
+    def release(self) -> None:
+        self.released = True
+
+
+class VirtualCameraAutoTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _window(self, directory: str) -> MonitorWindow:
+        return MonitorWindow(Path(directory) / "camera-presets.json", Path(directory) / "virtual-camera.json")
+
+    def test_auto_mode_armed_then_started_notifies_and_refreshes_controls(self) -> None:
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            fake = FakeVirtualCameraOutput()
+            window.virtual_camera = fake  # type: ignore[assignment]
+            with patch("monitor_desktop.app._resolve_loopback_device", return_value="/dev/video10"):
+                window.virtual_camera_mode.setCurrentIndex(1)  # Auto
+                window._set_capture(FakeCapture(frame), "Video connected")
+                self.assertTrue(window._vc_auto_armed)
+                window._tick()
+                self.assertTrue(fake.active)
+                self.assertEqual(fake.start_calls, 1)
+                self.assertEqual(fake.start_device, "/dev/video10")
+                self.assertIn("Virtual camera started:", window.status_label.text())
+                self.assertIn("Test Virtual Camera", window.status_label.text())
+                self.assertTrue(window.virtual_camera_status.text().startswith("Active:"))
+                # No tight retry loop: a second tick must not reopen the camera.
+                window._tick()
+                self.assertEqual(fake.start_calls, 1)
+            window.close()
+
+    def test_mode_off_never_auto_starts(self) -> None:
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            fake = FakeVirtualCameraOutput()
+            window.virtual_camera = fake  # type: ignore[assignment]
+            self.assertEqual(window.virtual_camera_mode.currentIndex(), 0)
+            with patch("monitor_desktop.app._resolve_loopback_device", return_value="/dev/video10"):
+                window._set_capture(FakeCapture(frame), "Video connected")
+                window._tick()
+                self.assertFalse(fake.active)
+                self.assertEqual(fake.start_calls, 0)
+            window.close()
+
+    def test_disconnecting_source_stops_active_virtual_camera(self) -> None:
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            fake = FakeVirtualCameraOutput()
+            window.virtual_camera = fake  # type: ignore[assignment]
+            window.capture = FakeCapture(frame)  # type: ignore[assignment]
+            fake.start(frame, "/dev/video10")
+            self.assertTrue(fake.active)
+            window.disconnect_source()
+            self.assertFalse(fake.active)
+            self.assertEqual(window.connection_label.text(), "NO SOURCE")
+            window.close()
+
+    def test_manual_stop_while_auto_disarms_until_next_activation(self) -> None:
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            fake = FakeVirtualCameraOutput()
+            window.virtual_camera = fake  # type: ignore[assignment]
+            with patch("monitor_desktop.app._resolve_loopback_device", return_value="/dev/video10"):
+                window.virtual_camera_mode.setCurrentIndex(1)  # Auto
+                window._set_capture(FakeCapture(frame), "Video connected")
+                window._tick()
+                self.assertTrue(fake.active)
+                window.toggle_virtual_camera()  # manual Stop
+                self.assertFalse(fake.active)
+                self.assertFalse(window._vc_auto_armed)
+                # Same source keeps delivering frames but must not restart.
+                window.capture = FakeCapture(frame)  # type: ignore[assignment]
+                window._tick()
+                self.assertFalse(fake.active)
+                # Next source activation re-arms and restarts.
+                window._set_capture(FakeCapture(frame), "Video connected")
+                window._tick()
+                self.assertTrue(fake.active)
+            window.close()
+
+    def test_dead_camera_live_view_stops_virtual_camera_with_single_notice(self) -> None:
+        class DeadCapture(GPhotoLiveCapture):
+            def __init__(self) -> None:
+                pass
+
+            def isOpened(self) -> bool:  # noqa: N802 - match OpenCV's API
+                return False
+
+            def release(self) -> None:
+                pass
+
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            fake = FakeVirtualCameraOutput()
+            window.virtual_camera = fake  # type: ignore[assignment]
+            fake.start(frame, "/dev/video10")
+            window.capture = DeadCapture()  # type: ignore[assignment]
+            window._tick()
+            self.assertFalse(fake.active)
+            self.assertIsNone(window.capture)
+            self.assertEqual(window.status_label.text(), "Camera live view ended.")
+            # A further tick must not repeat the notice or touch the camera.
+            window._notify("untouched")
+            window._tick()
+            self.assertEqual(window.status_label.text(), "untouched")
+            window.close()
+
+    def test_resolution_change_does_not_reopen_virtual_camera(self) -> None:
+        created: list[dict] = []
+
+        class FactoryCamera:
+            device = "Test Virtual Camera"
+
+            def __init__(self) -> None:
+                self.frames: list[np.ndarray] = []
+                self.closed = False
+
+            def send(self, frame: np.ndarray) -> None:
+                self.frames.append(frame.copy())
+
+            def close(self) -> None:
+                self.closed = True
+
+        camera = FactoryCamera()
+
+        def factory(**kwargs: object) -> FactoryCamera:
+            created.append(dict(kwargs))
+            return camera
+
+        output = VirtualCameraOutput(factory, fps=30)
+        output.start(np.zeros((180, 320, 3), dtype=np.uint8), "/dev/video10")
+        output.send(np.zeros((360, 640, 3), dtype=np.uint8))
+
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(camera.frames), 2)
+        self.assertEqual([frame.shape for frame in camera.frames], [(180, 320, 3), (180, 320, 3)])
+        output.stop()
+
+    def test_virtual_camera_prefs_persist_on_widget_change_and_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "virtual-camera.json"
+            window = self._window(directory)
+            window.virtual_camera_mode.setCurrentIndex(1)
+            window.virtual_camera_feed.setCurrentIndex(1)
+            window.virtual_camera_device.setText("/dev/video10")
+            saved = load_virtual_camera_prefs(path)
+            self.assertEqual(saved, {"mode": "auto", "feed": 1, "device_override": "/dev/video10"})
+            window.close()
+
+            reloaded = self._window(directory)
+            self.assertEqual(reloaded.virtual_camera_mode.currentIndex(), 1)
+            self.assertEqual(reloaded.virtual_camera_feed.currentIndex(), 1)
+            self.assertEqual(reloaded.virtual_camera_device.text(), "/dev/video10")
+            reloaded.close()
+
+    def test_unresolved_device_shows_remediation_once_per_arming(self) -> None:
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            fake = FakeVirtualCameraOutput()
+            window.virtual_camera = fake  # type: ignore[assignment]
+            with patch("monitor_desktop.app._resolve_loopback_device", return_value=None):
+                window.virtual_camera_mode.setCurrentIndex(1)  # Auto
+                window._set_virtual_camera_controls()
+                self.assertIn("Virtual camera driver not found", window.virtual_camera_status.text())
+                self.assertIn("setup-v4l2loopback", window.virtual_camera_status.text())
+                window._set_capture(FakeCapture(frame), "Video connected")
+                window._tick()
+                self.assertFalse(fake.active)
+                self.assertFalse(window._vc_auto_armed)
+                self.assertIn("Virtual camera driver not found", window.status_label.text())
+                # Disarmed: a second tick must not notify again.
+                window._notify("untouched")
+                window._tick()
+                self.assertEqual(window.status_label.text(), "untouched")
+            window.close()
+
+    def test_busy_device_shows_busy_message(self) -> None:
+        frame = np.full((24, 32, 3), 42, dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+
+            class BusyCamera(FakeVirtualCameraOutput):
+                def start(self, frame: np.ndarray, device: str | None) -> str:
+                    raise VirtualCameraError("Could not open the virtual camera '/dev/video10': busy")
+
+            window.virtual_camera = BusyCamera()  # type: ignore[assignment]
+            with patch("monitor_desktop.app._resolve_loopback_device", return_value="/dev/video10"):
+                window.virtual_camera_mode.setCurrentIndex(1)  # Auto
+                window._set_capture(FakeCapture(frame), "Video connected")
+                window._tick()
+                self.assertIn("Virtual camera is busy", window.status_label.text())
+                self.assertFalse(window._vc_auto_armed)
+            window.close()
 
 
 if __name__ == "__main__":
