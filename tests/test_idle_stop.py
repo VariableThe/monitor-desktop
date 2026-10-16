@@ -109,6 +109,19 @@ class IdleStopWindowTests(unittest.TestCase):
         window._notify = record  # type: ignore[method-assign]
         return notices
 
+    def _pump_until(self, predicate: object, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():  # type: ignore[operator]
+                return True
+            self.app.processEvents()
+        return bool(predicate())  # type: ignore[operator]
+
+    def _poll_and_wait(self, window: MonitorWindow) -> None:
+        previous = window._thermal_reading
+        window._poll_telemetry()
+        self.assertTrue(self._pump_until(lambda prev=previous: window._thermal_reading is not prev))
+
     def test_disabled_by_default_never_releases(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             window = self._window(directory)
@@ -252,7 +265,7 @@ class IdleStopWindowTests(unittest.TestCase):
             window = self._window(directory)
             window._set_capture(FakeCapture(self._frame()), "Video connected")
             window.active_backend = FakeGPhotoBackend(CameraTelemetry(battery_raw="80"))  # type: ignore[assignment]
-            window._poll_telemetry()
+            self._poll_and_wait(window)
             self.assertIsNotNone(window._thermal_reading)
             self.assertEqual(window._thermal_reading.battery_percent, 80)
             for label in (window.preview_camera_status, window.camera_connection_status):
@@ -266,7 +279,7 @@ class IdleStopWindowTests(unittest.TestCase):
             window = self._window(directory)
             window._set_capture(FakeCapture(self._frame()), "Video connected")
             window.active_backend = FakeGPhotoBackend(CameraTelemetry())  # type: ignore[assignment]
-            window._poll_telemetry()
+            self._poll_and_wait(window)
             self.assertIsNotNone(window._thermal_reading)
             self.assertIsNone(window._thermal_reading.battery_percent)
             for label in (window.preview_camera_status, window.camera_connection_status):
@@ -283,6 +296,10 @@ class IdleStopWindowTests(unittest.TestCase):
             window.camera_connection_status.setText("Connected via gphoto2 USB")
             window._thermal_reading = None
             window._poll_telemetry()
+            self.assertFalse(window.telemetry_poller.busy)
+            deadline = time.monotonic() + 0.2
+            while time.monotonic() < deadline:
+                self.app.processEvents()
             self.assertEqual(window.preview_camera_status.text(), "Connected via gphoto2 USB")
             self.assertEqual(window.camera_connection_status.text(), "Connected via gphoto2 USB")
             self.assertIsNone(window._thermal_reading)
@@ -338,18 +355,18 @@ class IdleStopWindowTests(unittest.TestCase):
             window.active_backend = FakeGPhotoBackend(CameraTelemetry(battery_raw="80"))  # type: ignore[assignment]
             window._stream_started_at = time.monotonic() - 25 * 60.0
             notices = self._notices(window)
-            window._poll_telemetry()
+            self._poll_and_wait(window)
             self.assertEqual(window._thermal_reading.state, "caution")
             caution_notices = len(notices)
             self.assertEqual(caution_notices, 1)
-            window._poll_telemetry()
-            window._poll_telemetry()
+            self._poll_and_wait(window)
+            self._poll_and_wait(window)
             self.assertEqual(len(notices), caution_notices)
             window._stream_started_at = time.monotonic()
-            window._poll_telemetry()
+            self._poll_and_wait(window)
             self.assertEqual(len(notices), caution_notices + 1)
             self.assertIn("normal", notices[-1].casefold())
-            window._poll_telemetry()
+            self._poll_and_wait(window)
             self.assertEqual(len(notices), caution_notices + 1)
             window.close()
 
@@ -359,9 +376,23 @@ class IdleStopWindowTests(unittest.TestCase):
             window.active_backend = FakeGPhotoBackend(raise_on_read=True)  # type: ignore[assignment]
             capture = FakeCapture(self._frame())
             window._set_capture(capture, "Video connected")
-            window._poll_telemetry()
+            self._poll_and_wait(window)
             self.assertIs(window.capture, capture)
             self.assertFalse(capture.released)
+            window.close()
+
+    def test_thermal_poll_while_idle_paused_requests_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            window = self._window(directory)
+            window._set_capture(FakeCapture(self._frame()), "Video connected")
+            window.active_backend = FakeGPhotoBackend(CameraTelemetry(battery_raw="80"))  # type: ignore[assignment]
+            window._idle_paused = True
+            window._poll_telemetry()
+            self.assertFalse(window.telemetry_poller.busy)
+            deadline = time.monotonic() + 0.2
+            while time.monotonic() < deadline:
+                self.app.processEvents()
+            self.assertIsNone(window._thermal_reading)
             window.close()
 
 

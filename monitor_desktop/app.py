@@ -61,6 +61,7 @@ from .idle import (
     should_stop,
 )
 from . import __version__
+from .telemetry_poller import TelemetryPoller
 from .thermal import STATE_CAUTION, STATE_CRITICAL, evaluate_telemetry
 from .video_tools import (
     BUILTIN_LOOK_NAMES,
@@ -645,6 +646,8 @@ class MonitorWindow(QMainWindow):
         self.telemetry_timer.setInterval(60000)
         self.telemetry_timer.timeout.connect(self._poll_telemetry)
         self.telemetry_timer.start()
+        self.telemetry_poller = TelemetryPoller(self)
+        self.telemetry_poller.readingReady.connect(self._on_telemetry_reading)
         self._activity_filter_installed = False
         app_instance = QApplication.instance()
         if app_instance is not None:
@@ -786,16 +789,17 @@ class MonitorWindow(QMainWindow):
         backend = self.active_backend
         if backend is None:
             return
-        read = getattr(backend, "read_telemetry", None)
-        if read is None:
+        if getattr(backend, "read_telemetry", None) is None:
             return
-        # Telemetry reads are sub-millisecond single-widget probes that briefly
-        # share the camera lock, so polling from the GUI thread does not hitch
-        # live view.
-        try:
-            telemetry = read()
-        except Exception:
-            telemetry = CameraTelemetry()
+        self.telemetry_poller.request(backend)
+
+    def _on_telemetry_reading(self, telemetry: Any) -> None:
+        if self._idle_paused:
+            return
+        if self.capture is None:
+            return
+        if self.active_backend is None:
+            return
         if telemetry is None:
             telemetry = CameraTelemetry()
         try:
@@ -2270,6 +2274,9 @@ class MonitorWindow(QMainWindow):
             QTimer.singleShot(400, self.auto_connect_usb_camera)
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        poller = getattr(self, "telemetry_poller", None)
+        if poller is not None:
+            poller.shutdown()
         if self._activity_filter_installed:
             app_instance = QApplication.instance()
             if app_instance is not None:
