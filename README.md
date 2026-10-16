@@ -143,6 +143,13 @@ The running app performs no privileged operations and cannot install a camera dr
 - The app is local-first: footage, LUT files, recordings, and stills stay on the operator's computer.
 - In Advanced mode, use the save control beside **Apply setup** to capture the current camera's writable quick settings as a named custom setup. Custom setups persist on the workstation and safely skip values unsupported by a different connected body.
 
+### Idle pause and temperature warnings
+
+- Idle pause is opt-in and off by default; enable **Pause the stream when idle** in **Settings** under **Streaming & power**, with a 2–120 minute timeout. It only ever acts when explicitly enabled.
+- Pausing never happens while the virtual camera output is active — virtual-camera output always wins so a downstream consumer (Zoom, OBS, ffmpeg) never freezes — nor while the camera or the monitor is recording, while a camera command is in flight, or when playing a local file. Interacting with viewfindrr (mouse, keys, or any camera/monitor control) resumes the previous source.
+- "Idle" means no interaction with viewfindrr's own window. Qt cannot see input in other apps, so this is not system-wide idle detection: using another program while viewfindrr sits untouched still counts as idle.
+- On temperature, viewfindrr stays honest about what Sony exposes over PTP: there is no readable per-degree sensor temperature (the `0xD251` overheat status exists in libgphoto2's `ptp.h` but is never exposed as a gphoto2 widget), so the app shows the battery level when available and otherwise reports a duration-based heat estimate for long live-view streams. Temperature only warns — it never stops streaming; only the idle path pauses it.
+
 ## Development
 
 ```bash

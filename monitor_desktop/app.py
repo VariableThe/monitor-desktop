@@ -6,17 +6,19 @@ import datetime as dt
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 import qtawesome as qta
-from PySide6.QtCore import QProcess, QStandardPaths, Qt, QTimer
+from PySide6.QtCore import QEvent, QProcess, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QFontDatabase, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QSpinBox,
     QStackedWidget,
     QSplitter,
     QToolButton,
@@ -43,12 +46,23 @@ from PySide6.QtWidgets import (
 from .backends import (
     CameraDevice,
     CameraError,
+    CameraTelemetry,
     GPhotoBackend,
     GPhotoLiveCapture,
     SonyRemoteApiBackend,
     SonySdkServerBackend,
 )
+from .idle import (
+    DEFAULT_IDLE_TIMEOUT_MINUTES,
+    DEFAULT_WARN_SECONDS,
+    MAX_IDLE_TIMEOUT_MINUTES,
+    MIN_IDLE_TIMEOUT_MINUTES,
+    IdleTracker,
+    should_stop,
+)
 from . import __version__
+from .telemetry_poller import TelemetryPoller
+from .thermal import STATE_CAUTION, STATE_CRITICAL, evaluate_telemetry
 from .video_tools import (
     BUILTIN_LOOK_NAMES,
     MonitorSettings,
@@ -259,6 +273,62 @@ def save_virtual_camera_prefs(path: Path, prefs: dict) -> None:
         raise
 
 
+def idle_stop_prefs_path() -> Path:
+    config_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppConfigLocation)
+    return Path(config_dir) / "idle-stop.json"
+
+
+def _clamp_idle_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return default
+    if value < minimum or value > maximum:
+        return default
+    return value
+
+
+def load_idle_stop_prefs(path: Path) -> dict:
+    defaults: dict = {
+        "enabled": False,
+        "timeout_minutes": DEFAULT_IDLE_TIMEOUT_MINUTES,
+        "warn_seconds": DEFAULT_WARN_SECONDS,
+    }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(defaults)
+    if not isinstance(payload, dict):
+        return dict(defaults)
+    return {
+        "enabled": payload.get("enabled") is True,
+        "timeout_minutes": _clamp_idle_int(
+            payload.get("timeout_minutes"), DEFAULT_IDLE_TIMEOUT_MINUTES, MIN_IDLE_TIMEOUT_MINUTES, MAX_IDLE_TIMEOUT_MINUTES
+        ),
+        "warn_seconds": _clamp_idle_int(payload.get("warn_seconds"), DEFAULT_WARN_SECONDS, 0, MAX_IDLE_TIMEOUT_MINUTES),
+    }
+
+
+def save_idle_stop_prefs(path: Path, prefs: dict) -> None:
+    source = prefs if isinstance(prefs, dict) else {}
+    cleaned = {
+        "enabled": source.get("enabled") is True,
+        "timeout_minutes": _clamp_idle_int(
+            source.get("timeout_minutes"), DEFAULT_IDLE_TIMEOUT_MINUTES, MIN_IDLE_TIMEOUT_MINUTES, MAX_IDLE_TIMEOUT_MINUTES
+        ),
+        "warn_seconds": _clamp_idle_int(source.get("warn_seconds"), DEFAULT_WARN_SECONDS, 0, MAX_IDLE_TIMEOUT_MINUTES),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        temporary_path.write_text(
+            json.dumps({"version": 1, **cleaned}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    except OSError:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 _application_fonts_loaded = False
 _application_font_families: list[str] = []
 
@@ -455,9 +525,58 @@ class SettingsDialog(QDialog):
         self.update_button.clicked.connect(parent.start_application_update)
         application_layout.addWidget(self.update_button)
         layout.addWidget(application)
+        power = QGroupBox("Streaming & power")
+        power_layout = QVBoxLayout(power)
+        power_layout.setSpacing(8)
+        self.idle_enable = QCheckBox("Pause the stream when idle")
+        self.idle_enable.setToolTip("Opt-in idle pause. Off by default; only acts when enabled.")
+        power_layout.addWidget(self.idle_enable)
+        self.idle_timeout = QSpinBox()
+        self.idle_timeout.setRange(MIN_IDLE_TIMEOUT_MINUTES, MAX_IDLE_TIMEOUT_MINUTES)
+        self.idle_timeout.setSuffix(" min")
+        self.idle_timeout.setToolTip("Minutes without interaction before the stream pauses.")
+        power_layout.addWidget(self.idle_timeout)
+        idle_hint = QLabel(
+            "Pausing never happens while the virtual camera output is active, "
+            "while the camera or monitor is recording, or when playing a local file. "
+            "Interacting with viewfindrr resumes streaming."
+        )
+        idle_hint.setObjectName("muted")
+        idle_hint.setWordWrap(True)
+        power_layout.addWidget(idle_hint)
+        layout.addWidget(power)
+        self._load_idle_stop_prefs_into_ui()
+        self.idle_enable.toggled.connect(self._on_idle_stop_prefs_changed)
+        self.idle_timeout.valueChanged.connect(self._on_idle_stop_prefs_changed)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.close)
         layout.addWidget(close_button)
+
+    def _load_idle_stop_prefs_into_ui(self) -> None:
+        window = self.parent()
+        prefs = window.idle_prefs if isinstance(window, MonitorWindow) else load_idle_stop_prefs(idle_stop_prefs_path())
+        was_blocked = self.idle_enable.blockSignals(True)
+        self.idle_enable.setChecked(bool(prefs.get("enabled", False)))
+        self.idle_enable.blockSignals(was_blocked)
+        was_blocked = self.idle_timeout.blockSignals(True)
+        self.idle_timeout.setValue(int(prefs.get("timeout_minutes", DEFAULT_IDLE_TIMEOUT_MINUTES)))
+        self.idle_timeout.blockSignals(was_blocked)
+        self.idle_timeout.setEnabled(self.idle_enable.isChecked())
+
+    def _on_idle_stop_prefs_changed(self) -> None:
+        window = self.parent()
+        if not isinstance(window, MonitorWindow):
+            return
+        window.idle_prefs = {
+            "enabled": bool(self.idle_enable.isChecked()),
+            "timeout_minutes": int(self.idle_timeout.value()),
+            "warn_seconds": window.idle_prefs.get("warn_seconds", DEFAULT_WARN_SECONDS),
+        }
+        self.idle_timeout.setEnabled(self.idle_enable.isChecked())
+        try:
+            save_idle_stop_prefs(window.idle_prefs_path, window.idle_prefs)
+        except OSError as exc:
+            window._notify(f"Could not save idle-stop settings: {exc}", error=True)
 
     def set_update_state(self, message: str, updating: bool = False) -> None:
         self.update_status.setText(message)
@@ -466,7 +585,7 @@ class SettingsDialog(QDialog):
 
 
 class MonitorWindow(QMainWindow):
-    def __init__(self, preset_path: Path | None = None, vcam_prefs_path: Path | None = None) -> None:
+    def __init__(self, preset_path: Path | None = None, vcam_prefs_path: Path | None = None, idle_prefs_path: Path | None = None) -> None:
         super().__init__()
         load_application_fonts()
         self.setWindowTitle("viewfindrr")
@@ -491,6 +610,18 @@ class MonitorWindow(QMainWindow):
         self.custom_camera_presets = load_custom_camera_presets(self.preset_path)
         self.vcam_prefs_path = vcam_prefs_path or virtual_camera_prefs_path()
         self._vc_auto_armed: bool = False
+        self.idle_prefs_path = idle_prefs_path or idle_stop_prefs_path()
+        self.idle_prefs = load_idle_stop_prefs(self.idle_prefs_path)
+        self.idle_tracker = IdleTracker()
+        self._idle_paused = False
+        self._idle_warned = False
+        self._idle_resume: dict | None = None
+        self._resuming_from_idle = False
+        self._pending_camera_commands = 0
+        self._last_mouse_move_mark = 0.0
+        self._stream_started_at: float | None = None
+        self._thermal_reading: Any | None = None
+        self._last_thermal_state: str | None = None
         self.frame_count = 0
         self._auto_connect_scheduled = False
         self.settings_dialog: SettingsDialog | None = None
@@ -507,6 +638,21 @@ class MonitorWindow(QMainWindow):
         self.frame_timer.setInterval(33)
         self.frame_timer.timeout.connect(self._tick)
         self.frame_timer.start()
+        self.idle_timer = QTimer(self)
+        self.idle_timer.setInterval(1000)
+        self.idle_timer.timeout.connect(self._check_idle)
+        self.idle_timer.start()
+        self.telemetry_timer = QTimer(self)
+        self.telemetry_timer.setInterval(60000)
+        self.telemetry_timer.timeout.connect(self._poll_telemetry)
+        self.telemetry_timer.start()
+        self.telemetry_poller = TelemetryPoller(self)
+        self.telemetry_poller.readingReady.connect(self._on_telemetry_reading)
+        self._activity_filter_installed = False
+        app_instance = QApplication.instance()
+        if app_instance is not None:
+            app_instance.installEventFilter(self)
+            self._activity_filter_installed = True
 
     def _load_virtual_camera_prefs_into_ui(self) -> None:
         prefs = load_virtual_camera_prefs(self.vcam_prefs_path)
@@ -540,6 +686,182 @@ class MonitorWindow(QMainWindow):
     def _on_virtual_camera_prefs_changed(self) -> None:
         self._save_virtual_camera_prefs()
         self._set_virtual_camera_controls()
+
+    def eventFilter(self, watched: Any, event: Any) -> bool:  # noqa: N802 - Qt API
+        event_type = event.type()
+        if event_type in (
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonDblClick,
+            QEvent.Type.KeyPress,
+            QEvent.Type.Wheel,
+        ):
+            self._record_activity()
+        elif event_type == QEvent.Type.MouseMove:
+            now = time.monotonic()
+            if now - self._last_mouse_move_mark >= 1.0:
+                self._last_mouse_move_mark = now
+                self._record_activity()
+        return super().eventFilter(watched, event)
+
+    def _record_activity(self) -> None:
+        self.idle_tracker.mark_activity()
+        self._idle_warned = False
+        if self._idle_paused and not self._resuming_from_idle and self._idle_resume is not None:
+            self._resume_from_idle()
+
+    def _check_idle(self) -> None:
+        if not self.idle_prefs.get("enabled", False):
+            return
+        if self.capture is None:
+            return
+        decision = should_stop(
+            enabled=True,
+            idle_seconds=self.idle_tracker.idle_seconds(),
+            timeout_seconds=self.idle_prefs.get("timeout_minutes", DEFAULT_IDLE_TIMEOUT_MINUTES) * 60,
+            warn_seconds=self.idle_prefs.get("warn_seconds", DEFAULT_WARN_SECONDS),
+            virtual_camera_active=self.virtual_camera.active,
+            camera_recording=self.camera_recording,
+            monitor_recording=self.writer is not None,
+            pending_commands=self._pending_camera_commands,
+            resumable=self._idle_resume is not None,
+        )
+        if decision.action == "warn":
+            if not self._idle_warned:
+                self._idle_warned = True
+                warn_seconds = self.idle_prefs.get("warn_seconds", DEFAULT_WARN_SECONDS)
+                self._notify(f"Pausing stream in {warn_seconds} s — move the mouse or press a key to keep it running.")
+        elif decision.action == "stop":
+            self._pause_for_idle()
+        else:
+            self._idle_warned = False
+
+    def _pause_for_idle(self) -> None:
+        if self.virtual_camera.active:
+            return
+        if self.capture is None:
+            return
+        self._release_capture()
+        self._idle_paused = True
+        self.connection_label.setText("STREAM PAUSED")
+        self._show_idle_paused_frame()
+        self._notify("Stream paused after no activity. Move the mouse or press a key to resume.")
+
+    def _resume_from_idle(self) -> None:
+        descriptor = self._idle_resume
+        if descriptor is None or self._resuming_from_idle:
+            return
+        self._resuming_from_idle = True
+        try:
+            kind = descriptor.get("kind")
+            if kind == "source":
+                self.source_kind.setCurrentIndex(int(descriptor.get("index", 0)))
+                self.source_input.setText(str(descriptor.get("value", "")))
+                self.connect_source()
+                if self.capture is not None:
+                    self._idle_paused = False
+                    self._notify("Streaming resumed.")
+                else:
+                    self._idle_paused = False
+                    self._show_idle_paused_frame()
+                    self._notify("Could not resume streaming — reconnect the source.", error=True)
+                return
+            if kind == "camera" and self.active_backend is not None:
+                self.start_camera_live_view()
+                if self.capture is not None:
+                    self._idle_paused = False
+                    self._notify("Streaming resumed.")
+                else:
+                    self._idle_paused = False
+                    self._show_idle_paused_frame()
+                    self._notify("Could not resume streaming — reconnect the source.", error=True)
+                return
+            self._idle_paused = False
+            self._show_idle_paused_frame()
+            self._notify("Could not resume streaming — reconnect the source.", error=True)
+        finally:
+            self._resuming_from_idle = False
+
+    def _poll_telemetry(self) -> None:
+        if self._idle_paused:
+            return
+        if self.capture is None:
+            return
+        backend = self.active_backend
+        if backend is None:
+            return
+        if getattr(backend, "read_telemetry", None) is None:
+            return
+        self.telemetry_poller.request(backend)
+
+    def _on_telemetry_reading(self, telemetry: Any) -> None:
+        if self._idle_paused:
+            return
+        if self.capture is None:
+            return
+        if self.active_backend is None:
+            return
+        if telemetry is None:
+            telemetry = CameraTelemetry()
+        try:
+            temperature_raw = telemetry.temperature_raw
+            overheat_raw = telemetry.overheat_raw
+            battery_raw = telemetry.battery_raw
+        except AttributeError:
+            temperature_raw = overheat_raw = battery_raw = None
+        if self._stream_started_at is None:
+            streaming_seconds = 0.0
+        else:
+            streaming_seconds = max(0.0, time.monotonic() - self._stream_started_at)
+        reading = evaluate_telemetry(
+            temperature_raw=temperature_raw,
+            overheat_raw=overheat_raw,
+            battery_raw=battery_raw,
+            streaming_seconds=streaming_seconds,
+            recording=self.camera_recording,
+            source_kind="file" if self.capture_is_file else "live_view",
+        )
+        self._thermal_reading = reading
+        self._update_thermal_labels(reading)
+        previous = self._last_thermal_state
+        self._last_thermal_state = reading.state
+        if reading.state in (STATE_CAUTION, STATE_CRITICAL):
+            if previous != reading.state:
+                self._notify(f"{reading.headline}. {reading.detail}")
+        elif previous in (STATE_CAUTION, STATE_CRITICAL):
+            self._notify("Camera temperature back to normal.")
+
+    def _update_thermal_labels(self, reading: Any) -> None:
+        if reading.state == STATE_CRITICAL:
+            color = "#f05a5f"
+        elif reading.state == STATE_CAUTION:
+            color = "#e9c66a"
+        else:
+            color = ""
+        battery = getattr(reading, "battery_percent", None)
+        if battery is not None:
+            text = f"{reading.headline} · Batt {battery}%"
+            tooltip = f"{reading.detail} Battery: {battery}%."
+        else:
+            text = reading.headline
+            tooltip = reading.detail
+        for label in (self.preview_camera_status, self.camera_connection_status):
+            label.setText(text)
+            label.setToolTip(tooltip)
+            label.setStyleSheet(f"color: {color};" if color else "")
+
+    def _reset_thermal_labels(self) -> None:
+        self._thermal_reading = None
+        self._last_thermal_state = None
+        if self.active_backend is not None:
+            connected = f"Connected via {self.active_backend.name}"
+            self.preview_camera_status.setText(connected)
+            self.camera_connection_status.setText(connected)
+        else:
+            self.preview_camera_status.setText("No Sony camera connected")
+            self._update_backend_hint()
+        for label in (self.preview_camera_status, self.camera_connection_status):
+            label.setToolTip("")
+            label.setStyleSheet("")
 
     def _resolve_virtual_camera_device(self) -> str | None:
         override = self.virtual_camera_device.text().strip()
@@ -1233,6 +1555,7 @@ class MonitorWindow(QMainWindow):
             self.connect_source()
 
     def connect_source(self) -> None:
+        self._record_activity()
         source_value = self.source_input.text().strip()
         if not source_value:
             self._notify("Enter a source before connecting.", error=True)
@@ -1250,6 +1573,11 @@ class MonitorWindow(QMainWindow):
         self.capture_is_file = self.source_kind.currentIndex() == 2 or Path(source_value).is_file()
         self.connection_label.setText("VIDEO CONNECTED")
         self._vc_auto_armed = True
+        self._stream_started_at = time.monotonic()
+        if self.capture_is_file:
+            self._idle_resume = None
+        else:
+            self._idle_resume = {"kind": "source", "value": source_value, "index": self.source_kind.currentIndex()}
         if self.source_kind.currentIndex() == 0 and source == 0:
             self._notify("Connected to capture device 0. For Sony USB control, use gphoto2 USB in the Sony camera panel.")
         else:
@@ -1261,12 +1589,19 @@ class MonitorWindow(QMainWindow):
         self.capture_is_file = False
         self.connection_label.setText(label.upper())
         self._vc_auto_armed = True
+        self._stream_started_at = time.monotonic()
+        self._idle_resume = {"kind": "camera", "label": label}
 
     def disconnect_source(self) -> None:
+        self._record_activity()
         self._release_capture()
         self.latest_source_frame = None
         self.stop_virtual_camera(notify=False)
         self.connection_label.setText("NO SOURCE")
+        self._idle_paused = False
+        self._idle_warned = False
+        self._idle_resume = None
+        self._reset_thermal_labels()
         self._show_idle_frame()
         self._notify("Video source disconnected.")
 
@@ -1274,6 +1609,7 @@ class MonitorWindow(QMainWindow):
         if self.capture is not None:
             self.capture.release()
             self.capture = None
+        self._stream_started_at = None
         if self.writer is not None:
             self.writer.release()
             self.writer = None
@@ -1289,6 +1625,7 @@ class MonitorWindow(QMainWindow):
         return source_frame if source_frame is not None else self.latest_source_frame
 
     def toggle_virtual_camera(self) -> None:
+        self._record_activity()
         if self.virtual_camera.active:
             self.stop_virtual_camera()
             self._vc_auto_armed = False
@@ -1568,8 +1905,10 @@ class MonitorWindow(QMainWindow):
             button.setToolTip(tooltip)
 
     def run_camera_action(self, action: str, quiet: bool = False) -> bool:
+        self._record_activity()
         if self.active_backend is None:
             return False
+        self._pending_camera_commands += 1
         try:
             if isinstance(self.active_backend, GPhotoBackend):
                 message = self.active_backend.action(action, self._output_dir())
@@ -1579,11 +1918,14 @@ class MonitorWindow(QMainWindow):
             if not quiet:
                 self._notify(str(exc), error=True)
             return False
+        finally:
+            self._pending_camera_commands -= 1
         if not quiet:
             self._notify(message)
         return True
 
     def toggle_camera_recording(self) -> None:
+        self._record_activity()
         starting = not self.camera_recording
         if not self.run_camera_action("record_start" if starting else "record_stop"):
             return
@@ -1599,12 +1941,16 @@ class MonitorWindow(QMainWindow):
             button.style().polish(button)
 
     def set_camera_setting(self, name: str, value: str) -> None:
+        self._record_activity()
         if self.active_backend is None:
             return
+        self._pending_camera_commands += 1
         try:
             self._notify(self.active_backend.set_property(name, value))
         except CameraError as exc:
             self._notify(str(exc), error=True)
+        finally:
+            self._pending_camera_commands -= 1
 
     def _invalid_camera_setting_value(self, name: str) -> None:
         self._notify(f"Choose a value supported by the camera for {name.replace('_', ' ')}.", error=True)
@@ -1702,6 +2048,7 @@ class MonitorWindow(QMainWindow):
         self._notify(f"Deleted custom setup: {name}.")
 
     def apply_camera_preset(self) -> None:
+        self._record_activity()
         if self.active_backend is None:
             self._notify("Connect a camera before applying a camera setup.", error=True)
             return
@@ -1735,6 +2082,7 @@ class MonitorWindow(QMainWindow):
             self._notify(f"{name} is not available on this camera.", error=True)
 
     def start_camera_live_view(self, automatic: bool = False) -> None:
+        self._record_activity()
         if self.active_backend is None:
             self._notify("Connect a camera before starting its live view.", error=True)
             return
@@ -1769,6 +2117,7 @@ class MonitorWindow(QMainWindow):
         self._notify(f"Loaded LUT: {Path(filename).name}")
 
     def toggle_recording(self) -> None:
+        self._record_activity()
         if self.writer is not None:
             self.writer.release()
             self.writer = None
@@ -1854,6 +2203,18 @@ class MonitorWindow(QMainWindow):
         self.video_surface.present(idle)
         self.preview_surface.present(idle)
 
+    def _show_idle_paused_frame(self) -> None:
+        paused = np.zeros((720, 1280, 3), dtype=np.uint8)
+        paused[:] = (7, 8, 6)
+        cv2.rectangle(paused, (80, 80), (1200, 640), (45, 50, 43), 1)
+        cv2.line(paused, (640, 270), (640, 450), (48, 55, 47), 1)
+        cv2.line(paused, (550, 360), (730, 360), (48, 55, 47), 1)
+        cv2.putText(paused, "STREAM PAUSED", (512, 500), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (154, 164, 154), 2, cv2.LINE_AA)
+        cv2.putText(paused, "NO ACTIVITY", (534, 534), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (154, 164, 154), 1, cv2.LINE_AA)
+        cv2.putText(paused, "move the mouse or press a key to resume", (424, 566), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (154, 164, 154), 1, cv2.LINE_AA)
+        self.video_surface.present(paused)
+        self.preview_surface.present(paused)
+
     def _notify(self, message: str, error: bool = False) -> None:
         self.status_label.setText(message)
         self.status_label.setStyleSheet("color: #f05a5f; background: #090a0d; border-top: 1px solid #20232b;" if error else "")
@@ -1913,8 +2274,18 @@ class MonitorWindow(QMainWindow):
             QTimer.singleShot(400, self.auto_connect_usb_camera)
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
+        poller = getattr(self, "telemetry_poller", None)
+        if poller is not None:
+            poller.shutdown()
+        if self._activity_filter_installed:
+            app_instance = QApplication.instance()
+            if app_instance is not None:
+                app_instance.removeEventFilter(self)
+            self._activity_filter_installed = False
         self.stop_virtual_camera(notify=False)
         self._release_capture()
+        self._idle_resume = None
+        self._idle_paused = False
         if isinstance(self.active_backend, GPhotoBackend):
             self.active_backend.disconnect()
         event.accept()

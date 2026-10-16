@@ -39,6 +39,20 @@ class CameraDevice:
     endpoint: str = ""
 
 
+@dataclass(frozen=True)
+class CameraTelemetry:
+    """Best-effort raw telemetry strings read from a camera transport."""
+
+    temperature_raw: str | None = None
+    overheat_raw: str | None = None
+    battery_raw: str | None = None
+    widget_names: tuple[str, ...] = ()
+
+    @property
+    def available(self) -> bool:
+        return self.temperature_raw is not None or self.overheat_raw is not None or self.battery_raw is not None
+
+
 class GPhotoLiveCapture:
     """Read preview frames without releasing the libgphoto2 camera session."""
 
@@ -215,6 +229,52 @@ class GPhotoBackend:
         except CameraError:
             return None
         return str(value)
+
+    _temperature_widgets = ("temperature", "cameratemperature", "sensortemperature", "devicetemperature")
+    _overheat_widgets = ("overheatstatus", "overheat")
+    _battery_widgets = ("batterylevel",)
+
+    def read_telemetry(self) -> CameraTelemetry:
+        """Probe read-only thermal/battery widgets without stalling live view.
+
+        Each candidate is read with ``camera.get_single_config(name)`` (~0.1 ms
+        per widget after the first call on a Sony ZV-E10 over USB). A full
+        ``get_config()`` costs ~350-620 ms on the same body and this method
+        used to issue one per candidate (~2.8 s per poll), freezing the GUI
+        thread and starving live view of the camera lock — so the poll path
+        must never call ``get_config()``. ``widget_names`` is left empty here;
+        it stays on ``CameraTelemetry`` for API stability.
+        """
+        if self.camera is None:
+            return CameraTelemetry()
+        with self._lock:
+            temperature_raw = self._first_widget_value(self._temperature_widgets)
+            overheat_raw = self._first_widget_value(self._overheat_widgets)
+            battery_raw = self._first_widget_value(self._battery_widgets)
+            return CameraTelemetry(
+                temperature_raw=temperature_raw,
+                overheat_raw=overheat_raw,
+                battery_raw=battery_raw,
+                widget_names=(),
+            )
+
+    def _first_widget_value(self, candidates: tuple[str, ...]) -> str | None:
+        for name in candidates:
+            try:
+                widget = self._camera().get_single_config(name)
+            except CameraError:
+                continue
+            except Exception:
+                # Missing widgets raise here (including GPhoto2Error); treat
+                # an absent candidate as a miss and try the next name.
+                continue
+            if widget is None:
+                continue
+            try:
+                return str(widget.get_value())
+            except Exception:
+                continue
+        return None
 
     def supports_action(self, action: str) -> bool:
         if not action.startswith("zoom_"):
@@ -484,6 +544,10 @@ class SonyRemoteApiBackend:
             return "actZoom" in self.available_api_names
         return True
 
+    def read_telemetry(self) -> CameraTelemetry:
+        # No thermal or battery telemetry is known over the Wi-Fi remote API.
+        return CameraTelemetry()
+
     def _call(self, method: str, params: list[Any], version: str = "1.0") -> dict[str, Any]:
         if not self.endpoint:
             raise CameraError("Connect to a Sony camera first.")
@@ -598,6 +662,10 @@ class SonySdkServerBackend:
     def set_property(self, name: str, value: str) -> str:
         self._request("PUT", f"/api/cameras/{self.camera_id}/properties/{name}", {"value": value})
         return f"Set {name.replace('_', ' ')} to {value}."
+
+    def read_telemetry(self) -> CameraTelemetry:
+        # No thermal or battery telemetry is known over the SDK-server transport.
+        return CameraTelemetry()
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
