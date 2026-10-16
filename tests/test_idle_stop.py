@@ -110,11 +110,16 @@ class IdleStopWindowTests(unittest.TestCase):
         return notices
 
     def _pump_until(self, predicate: object, timeout: float = 5.0) -> bool:
+        # NOTE: wait via the real event loop (QTest.qWait) instead of a hot
+        # processEvents() loop. A hot processEvents() loop while the
+        # background telemetry worker delivers a result aborts CPython 3.11
+        # (PySide6 6.12 refcount corruption, exit 134); the application runs
+        # a real event loop, so this matches production.
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if predicate():  # type: ignore[operator]
                 return True
-            self.app.processEvents()
+            QTest.qWait(5)
         return bool(predicate())  # type: ignore[operator]
 
     def _poll_and_wait(self, window: MonitorWindow) -> None:
@@ -297,9 +302,10 @@ class IdleStopWindowTests(unittest.TestCase):
             window._thermal_reading = None
             window._poll_telemetry()
             self.assertFalse(window.telemetry_poller.busy)
+            # NOTE: real event-loop wait (see _pump_until); must stay quiet.
             deadline = time.monotonic() + 0.2
             while time.monotonic() < deadline:
-                self.app.processEvents()
+                QTest.qWait(5)
             self.assertEqual(window.preview_camera_status.text(), "Connected via gphoto2 USB")
             self.assertEqual(window.camera_connection_status.text(), "Connected via gphoto2 USB")
             self.assertIsNone(window._thermal_reading)
@@ -389,9 +395,10 @@ class IdleStopWindowTests(unittest.TestCase):
             window._idle_paused = True
             window._poll_telemetry()
             self.assertFalse(window.telemetry_poller.busy)
+            # NOTE: real event-loop wait (see _pump_until); must stay quiet.
             deadline = time.monotonic() + 0.2
             while time.monotonic() < deadline:
-                self.app.processEvents()
+                QTest.qWait(5)
             self.assertIsNone(window._thermal_reading)
             window.close()
 

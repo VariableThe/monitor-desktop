@@ -14,6 +14,7 @@ import numpy as np
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QThread
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from monitor_desktop.app import MonitorWindow
@@ -63,13 +64,18 @@ class FakeCapture:
 
 
 def _pump_until(predicate: object, timeout: float = 5.0) -> bool:
+    # NOTE: wait via the real event loop (QTest.qWait) instead of a hot
+    # processEvents() loop. A hot processEvents() loop while the background
+    # telemetry worker delivers a result aborts CPython 3.11 (PySide6 6.12
+    # refcount corruption, exit 134); the application runs a real event
+    # loop, so this matches production.
     app = QApplication.instance()
     assert app is not None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():  # type: ignore[operator]
             return True
-        app.processEvents()
+        QTest.qWait(5)
     return bool(predicate())  # type: ignore[operator]
 
 
@@ -157,9 +163,10 @@ class TelemetryPollerTests(unittest.TestCase):
         self.assertLess(elapsed, 5.0)
         self.assertFalse(poller.request(backend))
         gate.set()
+        # NOTE: real event-loop wait (see _pump_until); must deliver nothing.
         deadline = time.monotonic() + 0.5
         while time.monotonic() < deadline:
-            self.app.processEvents()
+            QTest.qWait(5)
         self.assertEqual(received, [])
 
     def test_window_updates_label_from_delivered_reading(self) -> None:
