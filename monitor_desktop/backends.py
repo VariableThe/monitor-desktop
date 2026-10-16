@@ -235,11 +235,19 @@ class GPhotoBackend:
     _battery_widgets = ("batterylevel",)
 
     def read_telemetry(self) -> CameraTelemetry:
-        """Probe read-only thermal/battery widgets without disturbing live view."""
+        """Probe read-only thermal/battery widgets without stalling live view.
+
+        Each candidate is read with ``camera.get_single_config(name)`` (~0.1 ms
+        per widget after the first call on a Sony ZV-E10 over USB). A full
+        ``get_config()`` costs ~350-620 ms on the same body and this method
+        used to issue one per candidate (~2.8 s per poll), freezing the GUI
+        thread and starving live view of the camera lock — so the poll path
+        must never call ``get_config()``. ``widget_names`` is left empty here;
+        it stays on ``CameraTelemetry`` for API stability.
+        """
         if self.camera is None:
             return CameraTelemetry()
         with self._lock:
-            widget_names = self._child_widget_names()
             temperature_raw = self._first_widget_value(self._temperature_widgets)
             overheat_raw = self._first_widget_value(self._overheat_widgets)
             battery_raw = self._first_widget_value(self._battery_widgets)
@@ -247,31 +255,26 @@ class GPhotoBackend:
                 temperature_raw=temperature_raw,
                 overheat_raw=overheat_raw,
                 battery_raw=battery_raw,
-                widget_names=widget_names,
+                widget_names=(),
             )
 
     def _first_widget_value(self, candidates: tuple[str, ...]) -> str | None:
         for name in candidates:
             try:
-                return str(self._get_widget(name).get_value())
+                widget = self._camera().get_single_config(name)
             except CameraError:
                 continue
             except Exception:
+                # Missing widgets raise here (including GPhoto2Error); treat
+                # an absent candidate as a miss and try the next name.
+                continue
+            if widget is None:
+                continue
+            try:
+                return str(widget.get_value())
+            except Exception:
                 continue
         return None
-
-    def _child_widget_names(self) -> tuple[str, ...]:
-        try:
-            config = self._camera().get_config()
-            names: list[str] = []
-            for index in range(config.count_children()):
-                try:
-                    names.append(str(config.get_child(index).get_name()))
-                except Exception:
-                    continue
-            return tuple(sorted(names))
-        except Exception:
-            return ()
 
     def supports_action(self, action: str) -> bool:
         if not action.startswith("zoom_"):

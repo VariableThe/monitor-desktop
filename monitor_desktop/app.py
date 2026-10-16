@@ -789,6 +789,9 @@ class MonitorWindow(QMainWindow):
         read = getattr(backend, "read_telemetry", None)
         if read is None:
             return
+        # Telemetry reads are sub-millisecond single-widget probes that briefly
+        # share the camera lock, so polling from the GUI thread does not hitch
+        # live view.
         try:
             telemetry = read()
         except Exception:
